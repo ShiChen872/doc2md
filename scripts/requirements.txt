@@ -1,0 +1,6 @@
+# Prefer targeted extras: markitdown[all] can fail to resolve on newer Python
+# (e.g. youtube-transcript-api conflicts on 3.14).
+markitdown[docx,pptx,xlsx,pdf]>=0.1.0
+pymupdf>=1.24.0
+httpx>=0.27.0
+playwright>=1.40.0

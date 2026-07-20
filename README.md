@@ -8,6 +8,7 @@ Works with Cursor, Codex, and other Agent Skills–compatible hosts. Copy this d
 
 - Local: docx / pptx / xlsx / pdf / html / epub (via [microsoft/markitdown](https://github.com/microsoft/markitdown))
 - **PPTX**: theme text per slide + full-slide screenshots via `office2pdf-python` (LibreOffice optional fallback)
+- **Images** (png/jpg/…): keep original in `*_assets/` + OCR via [RapidOCR](https://github.com/RapidAI/RapidOCR) (`rapidocr-onnxruntime`; tesseract fallback)
 - Cloud: `kdocs.cn` / `365.kdocs.cn` share links
 - WPS intelligent docs (`.otl`): parse `open/otl` JSON + align CDN images to document order
 - Images saved as relative Markdown links (not base64)

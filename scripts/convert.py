@@ -300,6 +300,107 @@ def convert_pptx_as_slides(
     return "\n".join(blocks).strip() + "\n", len(slide_refs)
 
 
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tif", ".tiff"}
+
+
+def _sort_ocr_lines(items: list) -> list[str]:
+    """Sort RapidOCR boxes top-to-bottom, left-to-right; return text lines."""
+    rows: list[tuple[float, float, str]] = []
+    for item in items:
+        if not isinstance(item, (list, tuple)) or len(item) < 2:
+            continue
+        box, text = item[0], item[1]
+        if not text:
+            continue
+        try:
+            ys = [p[1] for p in box]
+            xs = [p[0] for p in box]
+            y = sum(ys) / len(ys)
+            x = min(xs)
+        except Exception:
+            y, x = 0.0, 0.0
+        rows.append((y, x, str(text).strip()))
+    rows.sort(key=lambda t: (round(t[0] / 12) * 12, t[1]))  # cluster nearby rows
+    return [t[2] for t in rows if t[2]]
+
+
+def ocr_image_text(image_path: Path) -> tuple[str, str]:
+    """OCR image text. Returns (text, engine_name).
+
+    Preference: RapidOCR (PaddleOCR ONNX, strong Chinese) → tesseract → empty.
+    """
+    # 1) RapidOCR — better CJK / diagram text than tesseract for this skill
+    try:
+        from rapidocr_onnxruntime import RapidOCR
+
+        engine = RapidOCR()
+        result, _elapse = engine(str(image_path))
+        if result:
+            lines = _sort_ocr_lines(result)
+            if lines:
+                return "\n".join(lines), "rapidocr"
+    except ImportError:
+        pass
+    except Exception:
+        pass
+
+    # 2) tesseract CLI fallback
+    import shutil
+    import subprocess
+
+    tess = shutil.which("tesseract")
+    if tess:
+        for lang in ("chi_sim+eng", "chi_sim", "eng"):
+            try:
+                proc = subprocess.run(
+                    [tess, str(image_path), "stdout", "-l", lang, "--psm", "6"],
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+                if proc.returncode == 0 and proc.stdout.strip():
+                    return proc.stdout.strip(), f"tesseract:{lang}"
+            except Exception:
+                continue
+
+    return "", "none"
+
+
+def convert_image_file(
+    image_path: Path, assets_dir: Path, rel_prefix: str, *, title: str | None = None
+) -> tuple[str, int]:
+    """Keep the original image in assets and OCR text into Markdown."""
+    import shutil
+
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    # Clear prior exports for this stem
+    for old in assets_dir.glob("image_*"):
+        old.unlink()
+
+    ext = image_path.suffix.lower().lstrip(".") or "png"
+    if ext == "jpeg":
+        ext = "jpg"
+    dest_name = f"image_001.{ext}"
+    dest = assets_dir / dest_name
+    shutil.copy2(image_path, dest)
+
+    heading = title or image_path.stem
+    ocr, engine = ocr_image_text(image_path)
+    parts = [
+        f"# {heading}\n",
+        f"![{heading}]({rel_prefix}/{dest_name})\n",
+    ]
+    if ocr:
+        parts.append(f"## OCR 文本（引擎: {engine}）\n")
+        parts.append(ocr + "\n")
+    else:
+        parts.append(
+            "> **Note:** 未提取到 OCR 文本。可安装 `rapidocr-onnxruntime`（推荐，中文更好）"
+            "或本机 `tesseract`（中文需 `chi_sim` 语言包）。\n"
+        )
+    return "\n".join(parts).strip() + "\n", 1
+
+
 def convert(input_path: Path, output_path: Path, assets_dir: Path | None = None) -> dict:
     if not input_path.is_file():
         raise FileNotFoundError(f"Input not found: {input_path}")
@@ -332,9 +433,12 @@ def convert(input_path: Path, output_path: Path, assets_dir: Path | None = None)
     uri_count = 0
     pdf_count = 0
     pptx_count = 0
+    image_count = 0
 
+    if suffix in IMAGE_SUFFIXES:
+        text, image_count = convert_image_file(input_path, assets_dir, rel_prefix, title=stem)
     # PPTX: one screenshot per slide + theme text (not per-icon extraction).
-    if suffix in {".pptx", ".pptm"}:
+    elif suffix in {".pptx", ".pptm"}:
         # Clear previous icon dumps if re-converting
         if assets_dir.exists():
             for old in assets_dir.glob("image_*"):
@@ -369,7 +473,8 @@ def convert(input_path: Path, output_path: Path, assets_dir: Path | None = None)
         "images_from_data_uri": uri_count,
         "images_from_pdf": pdf_count,
         "images_from_pptx": pptx_count,
-        "images_total": uri_count + pdf_count + pptx_count,
+        "images_from_image_file": image_count,
+        "images_total": uri_count + pdf_count + pptx_count + image_count,
         "markdown_chars": len(text),
     }
     return stats

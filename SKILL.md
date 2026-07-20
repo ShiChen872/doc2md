@@ -62,7 +62,9 @@ Session files (platform-agnostic):
 
 ## Image handling
 
-- DOCX / PPTX / EPUB / HTML: markitdown `keep_data_uris=True` on **convert()**, then decode data URIs to `<stem>_assets/`.
+- DOCX / EPUB / HTML: markitdown `keep_data_uris=True` on **convert()**, then decode data URIs to `<stem>_assets/`.
+- **PPTX**: per-slide **theme text** + **one full-slide screenshot**.
+  PPTX→PDF via `office2pdf-python` (no system Office required); LibreOffice `soffice` is optional fallback; then PyMuPDF renders page PNGs.
 - PDF: PyMuPDF extracts embedded images (approximate per-page placement).
 - WPS `.otl` intelligent docs: cannot use drive binary download (`notAllowType`); capture `open/otl` JSON + temporary CDN images via Playwright.
 

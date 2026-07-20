@@ -7,6 +7,8 @@ Usage:
 Images embedded as data URIs are decoded and saved under <stem>_assets/.
 For PDF, markitdown drops images; PyMuPDF extracts them per page and appends
 markdown image links after each page's content.
+For PPTX, each slide becomes theme text + one full-slide screenshot
+(office2pdf → PDF → PNG; LibreOffice is only an optional fallback).
 """
 
 from __future__ import annotations
@@ -125,6 +127,179 @@ def inject_pdf_images(markdown: str, page_images: list[tuple[int, list[str]]]) -
     return markdown.rstrip() + note + "\n".join(blocks) + "\n"
 
 
+MD_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
+SLIDE_SPLIT_RE = re.compile(r"<!--\s*Slide number:\s*(\d+)\s*-->", re.IGNORECASE)
+
+
+def _find_soffice() -> str | None:
+    candidates = [
+        "soffice",
+        "/opt/homebrew/bin/soffice",
+        "/usr/local/bin/soffice",
+        "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+    ]
+    import shutil
+
+    for c in candidates:
+        if Path(c).is_file():
+            return c
+        found = shutil.which(c)
+        if found:
+            return found
+    return None
+
+
+def pptx_to_pdf(pptx_path: Path, out_dir: Path) -> Path:
+    """Convert PPTX to PDF. Prefer pure-Python office2pdf; fall back to LibreOffice."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    dest = out_dir / "_slides_preview.pdf"
+
+    # 1) office2pdf — pip package, no LibreOffice / MS Office required
+    office2pdf_err: Exception | None = None
+    try:
+        from office2pdf import Format, convert_bytes
+
+        result = convert_bytes(pptx_path.read_bytes(), Format.PPTX)
+        dest.write_bytes(result.pdf)
+        return dest
+    except ImportError:
+        office2pdf_err = None
+    except Exception as e:
+        office2pdf_err = e
+
+    # 2) LibreOffice soffice — optional system dependency
+    import subprocess
+    import tempfile
+
+    soffice = _find_soffice()
+    if soffice:
+        with tempfile.TemporaryDirectory(prefix="doc2md_pptx_") as tmp:
+            tmp_path = Path(tmp)
+            safe_in = tmp_path / "input.pptx"
+            safe_in.write_bytes(pptx_path.read_bytes())
+            cmd = [
+                soffice,
+                "--headless",
+                "--nologo",
+                "--nofirststartwizard",
+                "--convert-to",
+                "pdf",
+                "--outdir",
+                str(tmp_path),
+                str(safe_in),
+            ]
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            pdf = tmp_path / "input.pdf"
+            if pdf.is_file():
+                dest.write_bytes(pdf.read_bytes())
+                return dest
+            lo_err = f"stdout={proc.stdout[:300]} stderr={proc.stderr[:300]}"
+        raise RuntimeError(
+            "PPTX→PDF failed with both office2pdf and LibreOffice.\n"
+            f"office2pdf: {office2pdf_err!r}\n"
+            f"LibreOffice: {lo_err}"
+        )
+
+    hint = (
+        "Install the Python package: pip install office2pdf-python\n"
+        "Or install LibreOffice (soffice) as a fallback."
+    )
+    if office2pdf_err is not None:
+        raise RuntimeError(f"PPTX→PDF via office2pdf failed: {office2pdf_err}\n{hint}") from office2pdf_err
+    raise RuntimeError(f"No PPTX→PDF backend available.\n{hint}")
+
+
+def render_pdf_pages(
+    pdf_path: Path, assets_dir: Path, rel_prefix: str, *, dpi: int = 144
+) -> list[str]:
+    """Render each PDF page to PNG. Returns relative markdown paths in page order."""
+    import fitz
+
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    # clear old slide_*.png
+    for old in assets_dir.glob("slide_*.png"):
+        old.unlink()
+
+    doc = fitz.open(pdf_path)
+    zoom = dpi / 72.0
+    matrix = fitz.Matrix(zoom, zoom)
+    refs: list[str] = []
+    for i in range(len(doc)):
+        page = doc[i]
+        pix = page.get_pixmap(matrix=matrix, alpha=False)
+        filename = f"slide_{i + 1:03d}.png"
+        pix.save(str(assets_dir / filename))
+        refs.append(f"{rel_prefix}/{filename}")
+    doc.close()
+    return refs
+
+
+def extract_slide_texts(pptx_path: Path) -> list[str]:
+    """Get thematic text per slide via markitdown, stripping per-shape image placeholders."""
+    from markitdown import MarkItDown
+
+    raw = MarkItDown().convert(str(pptx_path), keep_data_uris=False).text_content or ""
+    parts = SLIDE_SPLIT_RE.split(raw)
+    # parts: [preamble, num1, body1, num2, body2, ...]
+    slides: dict[int, str] = {}
+    if len(parts) >= 3:
+        for i in range(1, len(parts), 2):
+            try:
+                num = int(parts[i])
+            except ValueError:
+                continue
+            body = parts[i + 1] if i + 1 < len(parts) else ""
+            # Drop markitdown's fake image placeholders and empty noise
+            body = MD_IMAGE_RE.sub("", body)
+            body = re.sub(r"\n{3,}", "\n\n", body).strip()
+            # Drop lonely "### Notes:" with no content
+            if re.fullmatch(r"### Notes:\s*", body):
+                body = ""
+            body = re.sub(r"\n### Notes:\s*$", "", body).strip()
+            slides[num] = body
+    if slides:
+        max_n = max(slides)
+        return [slides.get(i, "") for i in range(1, max_n + 1)]
+
+    # Fallback: whole deck as one text block
+    text = MD_IMAGE_RE.sub("", raw)
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    return [text] if text else [""]
+
+
+def convert_pptx_as_slides(
+    pptx_path: Path, assets_dir: Path, rel_prefix: str, *, dpi: int = 144
+) -> tuple[str, int]:
+    """Build Markdown: per-slide theme text + one full-slide screenshot.
+
+    Does NOT extract individual icons/pictures from the deck.
+    """
+    import tempfile
+
+    texts = extract_slide_texts(pptx_path)
+
+    with tempfile.TemporaryDirectory(prefix="doc2md_pptx_render_") as tmp:
+        pdf = pptx_to_pdf(pptx_path, Path(tmp))
+        slide_refs = render_pdf_pages(pdf, assets_dir, rel_prefix, dpi=dpi)
+
+    n = max(len(texts), len(slide_refs))
+    blocks: list[str] = [
+        "> **Note:** PPTX is exported as per-slide text + full-slide screenshots "
+        "(via office2pdf; not individual icons).\n"
+    ]
+    for i in range(n):
+        num = i + 1
+        text = texts[i].strip() if i < len(texts) else ""
+        blocks.append(f"## Slide {num}\n")
+        if text:
+            blocks.append(text + "\n")
+        if i < len(slide_refs):
+            blocks.append(f"![Slide {num}]({slide_refs[i]})\n")
+        blocks.append("")
+
+    return "\n".join(blocks).strip() + "\n", len(slide_refs)
+
+
 def convert(input_path: Path, output_path: Path, assets_dir: Path | None = None) -> dict:
     if not input_path.is_file():
         raise FileNotFoundError(f"Input not found: {input_path}")
@@ -152,18 +327,31 @@ def convert(input_path: Path, output_path: Path, assets_dir: Path | None = None)
     except ValueError:
         rel_prefix = assets_dir.as_posix()
 
-    # keep_data_uris must be passed to convert(), not __init__
+    suffix = input_path.suffix.lower()
     md = MarkItDown()
-    result = md.convert(str(input_path), keep_data_uris=True)
-    text = result.text_content or ""
-
-    text, uri_count = extract_data_uris(text, assets_dir, rel_prefix)
-
+    uri_count = 0
     pdf_count = 0
-    if input_path.suffix.lower() == ".pdf":
-        page_images = extract_pdf_images(input_path, assets_dir, rel_prefix)
-        pdf_count = sum(len(refs) for _, refs in page_images)
-        text = inject_pdf_images(text, page_images)
+    pptx_count = 0
+
+    # PPTX: one screenshot per slide + theme text (not per-icon extraction).
+    if suffix in {".pptx", ".pptm"}:
+        # Clear previous icon dumps if re-converting
+        if assets_dir.exists():
+            for old in assets_dir.glob("image_*"):
+                old.unlink()
+            for old in assets_dir.glob("slide_*"):
+                old.unlink()
+        text, pptx_count = convert_pptx_as_slides(input_path, assets_dir, rel_prefix)
+    else:
+        # keep_data_uris must be passed to convert(), not __init__
+        result = md.convert(str(input_path), keep_data_uris=True)
+        text = result.text_content or ""
+        text, uri_count = extract_data_uris(text, assets_dir, rel_prefix)
+
+        if suffix == ".pdf":
+            page_images = extract_pdf_images(input_path, assets_dir, rel_prefix)
+            pdf_count = sum(len(refs) for _, refs in page_images)
+            text = inject_pdf_images(text, page_images)
 
     output_path.write_text(text, encoding="utf-8")
 
@@ -180,7 +368,8 @@ def convert(input_path: Path, output_path: Path, assets_dir: Path | None = None)
         "assets_dir": assets_dir_str,
         "images_from_data_uri": uri_count,
         "images_from_pdf": pdf_count,
-        "images_total": uri_count + pdf_count,
+        "images_from_pptx": pptx_count,
+        "images_total": uri_count + pdf_count + pptx_count,
         "markdown_chars": len(text),
     }
     return stats

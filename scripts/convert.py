@@ -127,6 +127,90 @@ def inject_pdf_images(markdown: str, page_images: list[tuple[int, list[str]]]) -
     return markdown.rstrip() + note + "\n".join(blocks) + "\n"
 
 
+def analyze_pdf_pages(pdf_path: Path, *, min_chars: int = 10) -> list[tuple[int, int]]:
+    """Return [(page_no, text_len), ...] for every page. Used to detect scanned pages."""
+    import fitz
+
+    doc = fitz.open(pdf_path)
+    out: list[tuple[int, int]] = []
+    for i in range(len(doc)):
+        out.append((i + 1, len(doc[i].get_text("text").strip())))
+    doc.close()
+    return out
+
+
+def ocr_pdf_pages(
+    pdf_path: Path,
+    pages: list[int],
+    assets_dir: Path,
+    rel_prefix: str,
+    *,
+    dpi: int = 200,
+) -> list[tuple[int, str, str, str]]:
+    """Render given 1-based page numbers to PNG and OCR them.
+
+    Returns list of (page_no, image_rel, ocr_text, engine_name).
+    """
+    import fitz
+
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    doc = fitz.open(pdf_path)
+    zoom = dpi / 72.0
+    matrix = fitz.Matrix(zoom, zoom)
+    out: list[tuple[int, str, str, str]] = []
+    for pn in pages:
+        if pn < 1 or pn > len(doc):
+            continue
+        page = doc[pn - 1]
+        pix = page.get_pixmap(matrix=matrix, alpha=False)
+        filename = f"pdf_page_{pn:03d}.png"
+        pix.save(str(assets_dir / filename))
+        rel = f"{rel_prefix}/{filename}"
+        ocr, engine = ocr_image_text(assets_dir / filename)
+        out.append((pn, rel, ocr, engine))
+    doc.close()
+    return out
+
+
+def build_scan_markdown(
+    title: str, scan_pages: list[tuple[int, str, str, str]]
+) -> str:
+    """Build Markdown body for a fully-scanned PDF: per-page image + OCR text."""
+    parts: list[str] = [f"# {title}\n"]
+    parts.append(
+        "> **Note:** 该 PDF 为扫描件 / 图片型文档，文字由页面渲染 + OCR 提取，"
+        "版面可能与原稿有差异，以页面图片为准。\n"
+    )
+    for page_no, rel, ocr, engine in scan_pages:
+        parts.append(f"## Page {page_no}\n")
+        parts.append(f"![Page {page_no}]({rel})\n")
+        if ocr:
+            parts.append(f"**OCR 文本（引擎: {engine}）**\n")
+            parts.append(ocr + "\n")
+        parts.append("")
+    return "\n".join(parts).strip() + "\n"
+
+
+def inject_pdf_scan_ocr(
+    markdown: str, scan_pages: list[tuple[int, str, str, str]]
+) -> str:
+    """Append an OCR section for sparse/scanned pages in an otherwise text PDF."""
+    if not scan_pages:
+        return markdown
+    note = (
+        "\n\n---\n\n"
+        "> **Note:** 以下页面文字稀少（疑似扫描页），已渲染并 OCR 补充文本。\n"
+    )
+    blocks: list[str] = []
+    for page_no, rel, ocr, engine in scan_pages:
+        lines = [f"\n### Page {page_no} (scanned)\n", f"![Page {page_no}]({rel})\n"]
+        if ocr:
+            lines.append(f"**OCR 文本（引擎: {engine}）**\n")
+            lines.append(ocr + "\n")
+        blocks.append("\n".join(lines))
+    return markdown.rstrip() + note + "\n".join(blocks) + "\n"
+
+
 MD_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
 SLIDE_SPLIT_RE = re.compile(r"<!--\s*Slide number:\s*(\d+)\s*-->", re.IGNORECASE)
 
@@ -310,7 +394,7 @@ def _sort_ocr_lines(items: list) -> list[str]:
         if not isinstance(item, (list, tuple)) or len(item) < 2:
             continue
         box, text = item[0], item[1]
-        if not text:
+        if not text or not isinstance(box, (list, tuple)) or len(box) < 2:
             continue
         try:
             ys = [p[1] for p in box]
@@ -453,9 +537,24 @@ def convert(input_path: Path, output_path: Path, assets_dir: Path | None = None)
         text, uri_count = extract_data_uris(text, assets_dir, rel_prefix)
 
         if suffix == ".pdf":
-            page_images = extract_pdf_images(input_path, assets_dir, rel_prefix)
-            pdf_count = sum(len(refs) for _, refs in page_images)
-            text = inject_pdf_images(text, page_images)
+            page_texts = analyze_pdf_pages(input_path)
+            sparse_pages = [pn for pn, n in page_texts if n < 10]
+            if sparse_pages and len(sparse_pages) == len(page_texts):
+                # Fully scanned PDF: render + OCR is the body; skip embedded
+                # image extraction (would duplicate the page render).
+                scan = ocr_pdf_pages(input_path, sparse_pages, assets_dir, rel_prefix)
+                text = build_scan_markdown(stem, scan)
+                pdf_count = len(scan)
+            else:
+                page_images = extract_pdf_images(input_path, assets_dir, rel_prefix)
+                pdf_count = sum(len(refs) for _, refs in page_images)
+                text = inject_pdf_images(text, page_images)
+                if sparse_pages:
+                    scan = ocr_pdf_pages(
+                        input_path, sparse_pages, assets_dir, rel_prefix
+                    )
+                    text = inject_pdf_scan_ocr(text, scan)
+                    pdf_count += len(scan)
 
     output_path.write_text(text, encoding="utf-8")
 

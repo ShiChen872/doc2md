@@ -8,9 +8,10 @@ Works with Cursor, Codex, and other Agent Skills–compatible hosts. Copy this d
 
 - Local: docx / pptx / xlsx / pdf / html / epub (via [microsoft/markitdown](https://github.com/microsoft/markitdown))
 - **PPTX**: theme text per slide + full-slide screenshots via `office2pdf-python` (LibreOffice optional fallback)
+- **PDF**: text via markitdown + embedded images via PyMuPDF; **scanned/image-only PDFs** auto-detected and OCR'd page-by-page
 - **Images** (png/jpg/…): keep original in `*_assets/` + OCR via [RapidOCR](https://github.com/RapidAI/RapidOCR) (`rapidocr-onnxruntime`; tesseract fallback)
 - Cloud: `kdocs.cn` / `365.kdocs.cn` share links
-- WPS intelligent docs (`.otl`): parse `open/otl` JSON + align CDN images to document order
+- WPS intelligent docs (`.otl`): parse `open/otl` JSON + align CDN images to document order; tables rendered as Markdown tables
 - Images saved as relative Markdown links (not base64)
 
 ## Setup
@@ -19,6 +20,26 @@ Works with Cursor, Codex, and other Agent Skills–compatible hosts. Copy this d
 python3 -m venv ~/.config/doc2md/venv
 ~/.config/doc2md/venv/bin/pip install -r scripts/requirements.txt
 # Uses system Google Chrome via Playwright (channel=chrome)
+```
+
+### OCR (optional but recommended)
+
+Image files and **scanned/image-only PDFs** are OCR'd to recover text.
+
+- **RapidOCR** (`rapidocr-onnxruntime`, installed by `requirements.txt`) is the primary
+  engine — pure pip, downloads ONNX models on first run, no system package needed, and
+  handles Chinese far better than tesseract.
+- **Tesseract** is an optional fallback. If you want it, install the binary plus the
+  Chinese language pack:
+  - macOS: `brew install tesseract` then `brew install tesseract-lang` (provides `chi_sim`)
+  - Debian/Ubuntu: `apt install tesseract-ocr tesseract-ocr-chi-sim`
+- If neither is available, the image is still copied to `*_assets/` and a note is added.
+
+### Tests (optional)
+
+```bash
+~/.config/doc2md/venv/bin/pip install pytest
+~/.config/doc2md/venv/bin/python -m pytest tests/ -q
 ```
 
 ## Usage

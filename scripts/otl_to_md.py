@@ -35,9 +35,36 @@ def render_inline(node: dict) -> str:
                 href = (m.get("attrs") or {}).get("href") or ""
                 t = f"[{t}]({href})"
         return t
+    if node.get("type") == "emoji":
+        attrs = node.get("attrs") if isinstance(node.get("attrs"), dict) else {}
+        return str(attrs.get("emoji") or "")
     return "".join(
         render_inline(c) for c in (node.get("content") or []) if isinstance(c, dict)
     )
+
+
+def _collect_cell_text(node: object) -> str:
+    """Collect all inline text from a table-cell subtree (no nested tables)."""
+    parts: list[str] = []
+
+    def walk(n: object) -> None:
+        if isinstance(n, dict):
+            t = n.get("type") or ""
+            if t == "text" or t == "emoji":
+                parts.append(render_inline(n))
+                return
+            if t == "outline-table":
+                return
+            for c in n.get("content") or []:
+                walk(c)
+        elif isinstance(n, list):
+            for x in n:
+                walk(x)
+
+    walk(node)
+    text = " ".join(p for p in parts if p).strip()
+    text = re.sub(r"\s+", " ", text)
+    return text.replace("|", "\\|") or " "
 
 
 def otl_to_markdown(
@@ -58,7 +85,8 @@ def otl_to_markdown(
         t = node.get("type") or ""
         attrs = node.get("attrs") if isinstance(node.get("attrs"), dict) else {}
 
-        if t in ("logic_block", "block_tile", "image_column", "image_column_container", "doc"):
+        if t in ("logic_block", "block_tile", "image_column", "image_column_container",
+                 "doc", "sub_doc", "sub_doc_tile", "HighlightBlock", "native_inline_container"):
             for c in node.get("content") or []:
                 emit(c, depth + 1)
             return
@@ -68,6 +96,41 @@ def otl_to_markdown(
         if t == "outline-title":
             if inline:
                 lines.append(f"# {inline}")
+                lines.append("")
+            return
+
+        if t == "horizontal_rule":
+            lines.append("\n---\n")
+            return
+
+        if t == "blockquote":
+            if inline:
+                for ln in inline.splitlines():
+                    lines.append(f"> {ln}" if ln else ">")
+                lines.append("")
+            return
+
+        if t == "outline-table":
+            rows: list[list[str]] = []
+            for row_node in node.get("content") or []:
+                if not isinstance(row_node, dict) or row_node.get("type") != "outline-table-row":
+                    continue
+                cells: list[str] = []
+                for cell_node in row_node.get("content") or []:
+                    if not isinstance(cell_node, dict) or cell_node.get("type") != "outline-table-cell":
+                        continue
+                    cells.append(_collect_cell_text(cell_node))
+                if cells:
+                    rows.append(cells)
+            if rows:
+                width = max(len(r) for r in rows)
+                for r in rows:
+                    while len(r) < width:
+                        r.append(" ")
+                lines.append("| " + " | ".join(rows[0]) + " |")
+                lines.append("| " + " | ".join("---" for _ in range(width)) + " |")
+                for r in rows[1:]:
+                    lines.append("| " + " | ".join(r) + " |")
                 lines.append("")
             return
 
@@ -105,6 +168,10 @@ def otl_to_markdown(
             return
 
         if t == "code_block":
+            lang = ""
+            if isinstance(attrs, dict):
+                lang = str(attrs.get("lang") or attrs.get("language") or "").strip()
+
             def text_of(n: object) -> str:
                 if isinstance(n, dict):
                     if n.get("type") == "text":
@@ -114,7 +181,7 @@ def otl_to_markdown(
                     return "".join(text_of(x) for x in n)
                 return ""
 
-            lines.append("```")
+            lines.append(f"```{lang}")
             lines.append(text_of(node))
             lines.append("```")
             lines.append("")

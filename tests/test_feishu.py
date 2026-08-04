@@ -139,6 +139,54 @@ def test_rewrite_placeholders_no_prefix_collision():
     assert "feishu-asset://" not in out
 
 
+def test_disable_embed_autoplay_bilibili():
+    url = "https://player.bilibili.com/player.html?bvid=1D7421N7xN&vd_source=abc"
+    out = ftm.disable_embed_autoplay(url)
+    assert "autoplay=0" in out
+    assert "bvid=1D7421N7xN" in out
+
+
+def test_render_iframe_uses_height_and_link():
+    md = ftm.render_iframe_markdown(
+        "https://player.bilibili.com/player.html?bvid=1D7421N7xN",
+        height=461,
+    )
+    assert 'height="461"' in md
+    assert "width=\"100%\"" in md
+    assert "autoplay=0" in md
+    assert "[打开视频](" in md
+    assert "allowfullscreen" in md
+
+
+def test_blocks_to_markdown_iframe():
+    model = {
+        "title": "视频页",
+        "root": {
+            "type": "page",
+            "children": [
+                {
+                    "id": 3,
+                    "type": "iframe",
+                    "snapshot": {
+                        "type": "iframe",
+                        "iframe": {
+                            "height": 461,
+                            "component": {
+                                "url": "https://player.bilibili.com/player.html?bvid=1D7421N7xN"
+                            },
+                        },
+                    },
+                    "children": [],
+                }
+            ],
+        },
+    }
+    md = ftm.blocks_to_markdown(model)
+    assert 'height="461"' in md
+    assert "autoplay=0" in md
+    assert "[打开视频](" in md
+
+
 def test_blocks_to_markdown_list_and_table():
     model = {
         "title": "列表表",

@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.4.1
+
+- Feishu iframe embeds: use document height + 16:9 sizing, disable autoplay on common players, add plain video link fallback
+- Tests for iframe rendering / autoplay URL rewrite
+
 ## v0.4.0
 
 - Feishu / Lark cloud docs: session-based export via Playwright (`feishu_login.py` + `feishu_to_md.py`)

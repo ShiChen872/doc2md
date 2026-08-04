@@ -24,7 +24,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qsl, unquote, urlencode, urlparse, urlunparse
 
 CFG = Path.home() / ".config" / "doc2md"
 DEFAULT_STATE = CFG / "feishu_storage_state.json"
@@ -510,6 +510,58 @@ def _asset_placeholder(block: dict[str, Any]) -> str:
     return ASSET_PLACEHOLDER.format(kind=kind, block_id=bid)
 
 
+def disable_embed_autoplay(url: str) -> str:
+    """Force common video embeds not to autoplay (Bilibili / YouTube / etc.)."""
+    url = (url or "").strip()
+    if not url:
+        return url
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if not any(
+        h in host
+        for h in (
+            "bilibili.com",
+            "youtube.com",
+            "youtu.be",
+            "youtube-nocookie.com",
+            "v.qq.com",
+            "youku.com",
+        )
+    ):
+        return url
+    pairs = [(k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True) if k.lower() != "autoplay"]
+    pairs.append(("autoplay", "0"))
+    # Bilibili also respects muted autoplay quirks; keep explicit mute off
+    if "bilibili.com" in host:
+        pairs = [(k, v) for k, v in pairs if k.lower() not in {"autoplay", "muted"}]
+        pairs.append(("autoplay", "0"))
+        pairs.append(("muted", "0"))
+    return urlunparse(parsed._replace(query=urlencode(pairs)))
+
+
+def render_iframe_markdown(
+    url: str,
+    *,
+    height: int | None = None,
+    indent: int = 0,
+) -> str:
+    """Embed as sized iframe + plain link; no autoplay; readable fallback."""
+    url = disable_embed_autoplay(url.strip())
+    if not url:
+        return ""
+    h = height if isinstance(height, int) and 120 <= height <= 2000 else 450
+    pad = " " * indent
+    # width+height avoid collapsed strips in MD previewers; allowfullscreen for normal playback
+    iframe = (
+        f'{pad}<iframe src="{url}" width="100%" height="{h}" '
+        f'style="max-width:100%;aspect-ratio:16/9;border:0;" '
+        f'allowfullscreen loading="lazy" referrerpolicy="no-referrer-when-downgrade">'
+        f"</iframe>"
+    )
+    link = f"{pad}[打开视频]({url})"
+    return f"{iframe}\n\n{link}"
+
+
 def _render_asset_block(block: dict[str, Any], indent: int = 0) -> str:
     block_type = block.get("type") or ""
     url = _asset_placeholder(block)
@@ -679,7 +731,12 @@ def _render_block(block: dict[str, Any], indent: int = 0) -> str:
         url = ((iframe.get("component") or {}).get("url") or "").strip()
         if not url:
             return ""
-        return f"{' ' * indent}<iframe src=\"{url}\"></iframe>"
+        height = iframe.get("height")
+        try:
+            height_i = int(height) if height is not None else None
+        except (TypeError, ValueError):
+            height_i = None
+        return render_iframe_markdown(url, height=height_i, indent=indent)
 
     if block_type == "isv":
         return _render_isv(block, indent)

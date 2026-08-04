@@ -2,10 +2,10 @@
 name: doc2md
 display_name: 文档转Markdown
 description: >-
-  将本地文档与 WPS/金山文档（kdocs / 365.kdocs）分享链接转为 Markdown，图片提取到本地 assets 目录。
+  将本地文档、WPS/金山文档（kdocs / 365.kdocs）与飞书/Lark 云文档（wiki / docx）分享链接转为 Markdown，图片提取到本地 assets 目录。
   支持 docx、pdf、pptx、xlsx、epub、html、图片 OCR、WPS 智能文档（.otl）及云文档分享链接。
-  使用场景：(1) 云文档/分享链接转 Markdown；(2) 本地 Office/PDF 转 md 并保留图片；(3) OTL 智能文档结构化导出。
-  触发关键词：转markdown、转md、doc2md、文档转markdown、云文档转md、kdocs转md、otl转md、anything to markdown。
+  使用场景：(1) 云文档/分享链接转 Markdown；(2) 本地 Office/PDF 转 md 并保留图片；(3) OTL / 飞书文档结构化导出。
+  触发关键词：转markdown、转md、doc2md、文档转markdown、云文档转md、kdocs转md、飞书转md、feishu转md、otl转md、anything to markdown。
 ---
 
 # doc2md — documents to Markdown
@@ -29,7 +29,9 @@ Replace `<this-skill>` with the absolute path of this skill directory
 1. Classify input:
    - **Local path** → `convert.py`
    - **kdocs / 365 share URL** → `wps_to_md.py` (one-shot to Markdown)
+   - **feishu.cn / larksuite.com wiki or docx URL** → `feishu_to_md.py`
 2. If WPS session missing/expired → run `wps_login.py` first (opens Chrome for the user to log in).
+   If Feishu session missing/expired → run `feishu_login.py` first.
 3. After conversion, report image counts and confirm `*_assets/` beside the `.md`.
 
 ### Local file
@@ -55,6 +57,18 @@ Session files (platform-agnostic):
 - `~/.config/doc2md/wps_storage_state.json` (Playwright — preferred)
 - `~/.config/doc2md/wps_cookie.txt` (Cookie string backup)
 
+### Feishu / Lark share link
+
+```bash
+# First time / cookie expired — user completes login in Chrome
+~/.config/doc2md/venv/bin/python <this-skill>/scripts/feishu_login.py 'https://xxx.feishu.cn/wiki/XXXX'
+
+# Convert wiki/docx URL → Markdown (+ assets)
+~/.config/doc2md/venv/bin/python <this-skill>/scripts/feishu_to_md.py 'https://xxx.feishu.cn/wiki/XXXX' -o /path/to/out.md
+```
+
+Session: `~/.config/doc2md/feishu_storage_state.json` (and `feishu_cookie.txt` backup).
+
 ### Scripts
 
 | Script | Role |
@@ -64,6 +78,8 @@ Session files (platform-agnostic):
 | `wps_to_md.py` | Share URL → Markdown (Office download or OTL parse) |
 | `wps_download.py` | Share URL → raw file / `.otl.json` only |
 | `otl_to_md.py` | OTL JSON → Markdown |
+| `feishu_login.py` | Headed Chrome login for Feishu/Lark |
+| `feishu_to_md.py` | Feishu wiki/docx URL → Markdown |
 
 ## Image handling
 
@@ -75,11 +91,12 @@ Session files (platform-agnostic):
 - WPS `.otl` intelligent docs: cannot use drive binary download (`notAllowType`); capture `open/otl` JSON + temporary CDN images via Playwright. **表格**（`outline-table`）渲染为 Markdown 表格（单元格内图片一并输出）；代码块带 `attrs.lang` 语言标签。
   - 图片：按 OTL `sourceKey` / `imgID` 映射到本地文件（避免表内图导致整篇错位）；优先 CDN 懒加载；若仍缺图，深滚并合并 `/attachment/shapes` 按 `sourceKey` 下载 `raw`，缺 key 时再滚一轮重试。
 
-## Failure fallback (WPS)
+## Failure fallback (WPS / Feishu)
 
-1. Re-run `wps_login.py` if session expired.
-2. If still failing (password-protected link, unsupported type): ask user to export/download in WPS UI, then `convert.py` on the local file.
+1. Re-run `wps_login.py` / `feishu_login.py` if session expired.
+2. If still failing (password-protected link, rate limit, unsupported type): ask user to export/download in the product UI, then `convert.py` on the local file.
 3. Do not invent credentials or scrape login forms — only open a browser for the user to log in themselves.
+4. Feishu: complex blocks (bitable / sheet / mindnote) are skipped with an HTML comment placeholder; legacy `/docs/` may need upgrade to new docx.
 
 ## Portability
 
@@ -89,4 +106,4 @@ Session files (platform-agnostic):
 
 ## Supported formats
 
-markitdown formats (docx, pptx, xlsx, pdf, html, epub, …) + WPS share links including 365 enterprise and intelligent docs (`.otl`).
+markitdown formats (docx, pptx, xlsx, pdf, html, epub, …) + WPS share links (including 365 / `.otl`) + Feishu/Lark wiki & docx links.

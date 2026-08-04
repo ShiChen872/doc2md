@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.4.0
+
+- Feishu / Lark cloud docs: session-based export via Playwright (`feishu_login.py` + `feishu_to_md.py`)
+- Supports `/wiki/` and `/docx/` URLs; extracts in-page `PageMain` block tree → Markdown + local `*_assets/`
+- Image path rewrite: placeholders end with `/`, longest-first replace, assets saved as `image_NNN.ext` (avoids short id mangling longer ones)
+- Unit tests for URL parsing, block→Markdown, and placeholder prefix safety
+- Docs: SKILL / README classify `feishu.cn` / `larksuite.com` → `feishu_to_md.py`
+
 ## v0.3.2
 
 - OTL image placement: map by `sourceKey` / `imgID` instead of emit-order index (fixes wholesale misalignment when some pictures sit in tables or containers)

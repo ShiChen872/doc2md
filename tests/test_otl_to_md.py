@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import re
 import sys
 from pathlib import Path
 
@@ -174,7 +176,6 @@ def test_convert_file_writes_output(tmp_path: Path):
         {"type": "outline-title", "content": [_text_node("测试标题")]},
         _para("一段正文"),
     )
-    import json
     src = tmp_path / "in.otl.json"
     src.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
     out = tmp_path / "out.md"
@@ -182,3 +183,89 @@ def test_convert_file_writes_output(tmp_path: Path):
     assert out.is_file()
     assert "测试标题" in out.read_text(encoding="utf-8")
     assert stats["pictures_in_otl"] == 0
+
+
+def test_image_map_by_source_key_not_emit_index():
+    """Files keyed by sourceKey must not shift when earlier pictures are in a table."""
+    cell_pic = {
+        "type": "outline-table-cell",
+        "content": [{
+            "type": "picture",
+            "attrs": {"sourceKey": "SK_TABLE", "imgID": "ID_TABLE"},
+        }],
+    }
+    row = {"type": "outline-table-row", "content": [cell_pic]}
+    raw = _doc(
+        {"type": "outline-table", "content": [row]},
+        {"type": "picture", "attrs": {"sourceKey": "SK_AFTER", "imgID": "ID_AFTER"}},
+    )
+    image_map = {"SK_TABLE": "image_001.png", "SK_AFTER": "image_002.png"}
+    md = otl.otl_to_markdown(raw, image_map=image_map, assets_rel="assets")
+    assert "assets/image_001.png" in md
+    assert "![image 2](assets/image_002.png)" in md
+
+
+def test_table_cell_includes_picture():
+    cell = {
+        "type": "outline-table-cell",
+        "content": [
+            {"type": "paragraph", "attrs": {}, "content": [_text_node("说明")]},
+            {"type": "picture", "attrs": {"sourceKey": "SK1", "imgID": "ID1"}},
+        ],
+    }
+    raw = _doc({
+        "type": "outline-table",
+        "content": [{"type": "outline-table-row", "content": [cell]}],
+    })
+    md = otl.otl_to_markdown(
+        raw, image_map={"SK1": "image_001.png"}, assets_rel="assets"
+    )
+    assert "| " in md
+    assert "说明" in md
+    assert "assets/image_001.png" in md
+
+
+def test_build_image_map_from_files(tmp_path: Path):
+    raw = _doc(
+        {"type": "picture", "attrs": {"sourceKey": "A", "imgID": "IA"}},
+        {"type": "picture", "attrs": {"sourceKey": "B", "imgID": "IB"}},
+    )
+    a = tmp_path / "a.png"
+    b = tmp_path / "b.png"
+    a.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 8)
+    b.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x01" * 8)
+    assets = tmp_path / "assets"
+    amap, names = otl.build_image_map_from_files(raw, [a, b], assets)
+    assert amap["A"].startswith("image_")
+    assert amap["B"].startswith("image_")
+    assert amap["IA"] == amap["A"]
+    assert names[0] and names[1]
+    assert (assets / names[0]).is_file()
+
+
+def test_convert_file_key_map_survives_table_skip(tmp_path: Path):
+    cell_pic = {
+        "type": "outline-table-cell",
+        "content": [{"type": "picture", "attrs": {"sourceKey": "SK_T", "imgID": "ID_T"}}],
+    }
+    raw = _doc(
+        {"type": "outline-table", "content": [
+            {"type": "outline-table-row", "content": [cell_pic]}
+        ]},
+        {"type": "picture", "attrs": {"sourceKey": "SK_X", "imgID": "ID_X"}},
+    )
+    src = tmp_path / "in.otl.json"
+    src.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+    t = tmp_path / "t.png"
+    x = tmp_path / "x.png"
+    t.write_bytes(b"\x89PNG\r\n\x1a\nTTTT")
+    x.write_bytes(b"\x89PNG\r\n\x1a\nXXXX")
+    out = tmp_path / "out.md"
+    assets = tmp_path / "out_assets"
+    otl.convert_file(src, out, assets_dir=assets, image_files=[t, x])
+    md = out.read_text(encoding="utf-8")
+    assert "image_002" in md
+    assert md.count("image_001") >= 1
+    assert (assets / "image_002.png").read_bytes().endswith(b"XXXX")
+    m = re.search(r"!\[image 2\]\(([^)]+)\)", md)
+    assert m and m.group(1).endswith("image_002.png")

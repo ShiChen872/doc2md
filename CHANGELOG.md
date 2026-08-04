@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.3.2
+
+- OTL image placement: map by `sourceKey` / `imgID` instead of emit-order index (fixes wholesale misalignment when some pictures sit in tables or containers)
+- Table cells: emit pictures inside `outline-table` cells as Markdown images
+- Pass through additional OTL containers (`circle_object`, nested sub-doc layouts) so pictures are not skipped
+- WPS: if any shape key is still missing after the first scroll/download pass, scroll again and retry
+- Regression tests for key-based image maps and in-table pictures
+
 ## v0.3.1
 
 - OTL images: when CDN matching is incomplete, scroll and merge `/attachment/shapes`, download by `sourceKey`

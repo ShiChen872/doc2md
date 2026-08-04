@@ -602,6 +602,12 @@ def share_to_markdown(url: str, output_md: Path) -> dict:
             shaped = fetch_images_by_source_keys(
                 context, pictures, shapes_map, referer=url
             )
+            # One more pass for any still-missing keys
+            if any(x is None for x in shaped):
+                scroll_until_shapes(page, pictures, shapes_map, max_rounds=40)
+                shaped = fetch_images_by_source_keys(
+                    context, pictures, shapes_map, referer=url
+                )
             result["shapes_keys"] = len(shapes_map)
             result["shapes_downloaded"] = sum(1 for x in shaped if x is not None)
 

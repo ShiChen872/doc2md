@@ -5,8 +5,9 @@ Usage:
   otl_to_md.py <otl.json> [-o OUTPUT.md] [--assets-dir DIR] [--image IMAGE ...]
   otl_to_md.py <otl.json> -o out.md --assets-dir out_assets --image img1.png --image img2.png
 
-Images are referenced in document order as picture nodes appear in the OTL tree.
-Pass local image filenames (already saved under assets-dir) with --image in order.
+Images are keyed by OTL picture `sourceKey` / `imgID` whenever possible.
+`--image` still accepts files in full-tree picture order (legacy); convert_file
+builds a key→file map from the OTL so emit order cannot shift assignments.
 """
 
 from __future__ import annotations
@@ -16,6 +17,56 @@ import json
 import re
 import sys
 from pathlib import Path
+
+
+CONTAINER_TYPES = (
+    "logic_block",
+    "block_tile",
+    "image_column",
+    "image_column_container",
+    "doc",
+    "sub_doc",
+    "sub_doc_tile",
+    "HighlightBlock",
+    "native_inline_container",
+    "circle_object",
+    "sub_doc_layout_object",
+    "sub_doc_object",
+)
+
+
+def picture_keys(attrs: dict | None) -> list[str]:
+    """Stable lookup keys for a picture node (sourceKey preferred, then imgID)."""
+    if not isinstance(attrs, dict):
+        return []
+    keys: list[str] = []
+    for field in ("sourceKey", "imgID"):
+        v = attrs.get(field)
+        if v is None:
+            continue
+        s = str(v).strip()
+        if s and s not in keys:
+            keys.append(s)
+    return keys
+
+
+def iter_otl_picture_attrs(raw: dict) -> list[dict]:
+    """Return picture attrs in full-tree document order."""
+    pics: list[dict] = []
+
+    def walk(n: object) -> None:
+        if isinstance(n, dict):
+            if n.get("type") == "picture":
+                attrs = n.get("attrs") if isinstance(n.get("attrs"), dict) else {}
+                pics.append(attrs)
+            for v in n.values():
+                walk(v)
+        elif isinstance(n, list):
+            for i in n:
+                walk(i)
+
+    walk(raw.get("content") or raw)
+    return pics
 
 
 def render_inline(node: dict) -> str:
@@ -43,17 +94,74 @@ def render_inline(node: dict) -> str:
     )
 
 
-def _collect_cell_text(node: object) -> str:
-    """Collect all inline text from a table-cell subtree (no nested tables)."""
+def _resolve_image_name(
+    attrs: dict,
+    *,
+    image_map: dict[str, str],
+    image_names: list[str],
+    emit_index: int,
+) -> str:
+    for key in picture_keys(attrs):
+        name = image_map.get(key)
+        if name:
+            return name
+    # Legacy fallback: emit-order list (only safe when no pictures were skipped)
+    if 0 <= emit_index < len(image_names):
+        return image_names[emit_index] or ""
+    return ""
+
+
+def _picture_markdown(
+    attrs: dict,
+    *,
+    image_map: dict[str, str],
+    image_names: list[str],
+    emit_index: int,
+    assets_rel: str,
+    n: int,
+) -> str:
+    name = _resolve_image_name(
+        attrs, image_map=image_map, image_names=image_names, emit_index=emit_index
+    )
+    if name:
+        rel = f"{assets_rel}/{name}" if assets_rel else name
+        return f"![image {n}]({rel})"
+    img_id = attrs.get("imgID") or attrs.get("sourceKey") or ""
+    return f"<!-- missing picture {n} {img_id} -->"
+
+
+def _collect_cell_md(
+    node: object,
+    *,
+    image_map: dict[str, str],
+    image_names: list[str],
+    pic_i: dict,
+    assets_rel: str,
+) -> str:
+    """Collect cell markdown: text + any pictures (keyed, not index-shifted)."""
     parts: list[str] = []
 
     def walk(n: object) -> None:
         if isinstance(n, dict):
             t = n.get("type") or ""
+            attrs = n.get("attrs") if isinstance(n.get("attrs"), dict) else {}
             if t == "text" or t == "emoji":
                 parts.append(render_inline(n))
                 return
             if t == "outline-table":
+                return
+            if t == "picture":
+                pic_i["n"] += 1
+                md = _picture_markdown(
+                    attrs,
+                    image_map=image_map,
+                    image_names=image_names,
+                    emit_index=pic_i["n"] - 1,
+                    assets_rel=assets_rel,
+                    n=pic_i["n"],
+                )
+                # Keep pipe-safe for table cells
+                parts.append(md.replace("|", "\\|"))
                 return
             for c in n.get("content") or []:
                 walk(c)
@@ -64,18 +172,26 @@ def _collect_cell_text(node: object) -> str:
     walk(node)
     text = " ".join(p for p in parts if p).strip()
     text = re.sub(r"\s+", " ", text)
-    return text.replace("|", "\\|") or " "
+    if not text:
+        return " "
+    return re.sub(r"(?<!\\)\|", r"\\|", text)
 
 
 def otl_to_markdown(
     raw: dict,
     *,
     image_names: list[str] | None = None,
+    image_map: dict[str, str] | None = None,
     assets_rel: str = "",
     source_note: str | None = None,
 ) -> str:
-    """Convert parsed OTL JSON to Markdown text."""
+    """Convert parsed OTL JSON to Markdown text.
+
+    Prefer `image_map` keyed by sourceKey/imgID. `image_names` remains as a
+    legacy emit-order fallback when a key is missing from the map.
+    """
     image_names = list(image_names or [])
+    image_map = dict(image_map or {})
     pic_i = {"n": 0}
     lines: list[str] = []
 
@@ -85,8 +201,7 @@ def otl_to_markdown(
         t = node.get("type") or ""
         attrs = node.get("attrs") if isinstance(node.get("attrs"), dict) else {}
 
-        if t in ("logic_block", "block_tile", "image_column", "image_column_container",
-                 "doc", "sub_doc", "sub_doc_tile", "HighlightBlock", "native_inline_container"):
+        if t in CONTAINER_TYPES:
             for c in node.get("content") or []:
                 emit(c, depth + 1)
             return
@@ -119,7 +234,15 @@ def otl_to_markdown(
                 for cell_node in row_node.get("content") or []:
                     if not isinstance(cell_node, dict) or cell_node.get("type") != "outline-table-cell":
                         continue
-                    cells.append(_collect_cell_text(cell_node))
+                    cells.append(
+                        _collect_cell_md(
+                            cell_node,
+                            image_map=image_map,
+                            image_names=image_names,
+                            pic_i=pic_i,
+                            assets_rel=assets_rel,
+                        )
+                    )
                 if cells:
                     rows.append(cells)
             if rows:
@@ -147,16 +270,17 @@ def otl_to_markdown(
 
         if t == "picture":
             pic_i["n"] += 1
-            idx = pic_i["n"] - 1
-            name = image_names[idx] if 0 <= idx < len(image_names) else ""
-            if name:
-                rel = f"{assets_rel}/{name}" if assets_rel else name
-                lines.append(f"![image {pic_i['n']}]({rel})")
-                lines.append("")
-            else:
-                img_id = attrs.get("imgID") or attrs.get("sourceKey") or ""
-                lines.append(f"<!-- missing picture {pic_i['n']} {img_id} -->")
-                lines.append("")
+            lines.append(
+                _picture_markdown(
+                    attrs,
+                    image_map=image_map,
+                    image_names=image_names,
+                    emit_index=pic_i["n"] - 1,
+                    assets_rel=assets_rel,
+                    n=pic_i["n"],
+                )
+            )
+            lines.append("")
             return
 
         if "heading" in t:
@@ -203,9 +327,38 @@ def otl_to_markdown(
 
 def load_otl(path: Path) -> dict:
     data = path.read_bytes()
-    # allow raw json or utf-8 text
     text = data.decode("utf-8")
     return json.loads(text)
+
+
+def build_image_map_from_files(
+    raw: dict,
+    image_files: list[Path | None],
+    assets_dir: Path,
+) -> tuple[dict[str, str], list[str]]:
+    """Save image_files (full-tree order) and return (key→name, ordered names)."""
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    pictures = iter_otl_picture_attrs(raw)
+    image_map: dict[str, str] = {}
+    image_names: list[str] = []
+
+    for i, attrs in enumerate(pictures, 1):
+        src = image_files[i - 1] if i - 1 < len(image_files) else None
+        if src is None:
+            image_names.append("")
+            continue
+        src = Path(src)
+        if not src.is_file():
+            image_names.append("")
+            continue
+        dest_name = src.name if src.parent == assets_dir else f"image_{i:03d}{src.suffix or '.png'}"
+        dest = assets_dir / dest_name
+        if src.resolve() != dest.resolve():
+            dest.write_bytes(src.read_bytes())
+        image_names.append(dest.name)
+        for key in picture_keys(attrs):
+            image_map[key] = dest.name
+    return image_map, image_names
 
 
 def convert_file(
@@ -214,6 +367,7 @@ def convert_file(
     assets_dir: Path | None = None,
     image_files: list[Path | None] | None = None,
     source_url: str | None = None,
+    image_map: dict[str, str] | None = None,
 ) -> dict:
     raw = load_otl(input_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -222,28 +376,28 @@ def convert_file(
         assets_dir = output_path.parent / f"{output_path.stem}_assets"
 
     image_names: list[str] = []
-    if image_files:
-        assets_dir.mkdir(parents=True, exist_ok=True)
-        for i, src in enumerate(image_files, 1):
-            if src is None:
-                image_names.append("")  # placeholder slot — picture stays missing
-                continue
-            src = Path(src)
-            if not src.is_file():
-                image_names.append("")
-                continue
-            dest_name = src.name if src.parent == assets_dir else f"image_{i:03d}{src.suffix or '.png'}"
-            dest = assets_dir / dest_name
-            if src.resolve() != dest.resolve():
-                dest.write_bytes(src.read_bytes())
-            image_names.append(dest.name)
+    resolved_map: dict[str, str] = dict(image_map or {})
+
+    if image_files is not None:
+        resolved_map, image_names = build_image_map_from_files(raw, image_files, assets_dir)
+        # allow explicit image_map to override filenames if provided
+        if image_map:
+            resolved_map.update(image_map)
+    elif resolved_map:
+        # map already points at names under assets_dir
+        image_names = []
     elif assets_dir.is_dir():
-        # pick image_* in sorted order
-        image_names = sorted(
+        # Legacy: sorted image_* — also try to key by matching picture order
+        sorted_names = sorted(
             p.name
             for p in assets_dir.iterdir()
             if p.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".gif"}
         )
+        image_names = list(sorted_names)
+        pictures = iter_otl_picture_attrs(raw)
+        for attrs, name in zip(pictures, sorted_names):
+            for key in picture_keys(attrs):
+                resolved_map.setdefault(key, name)
 
     try:
         rel = assets_dir.resolve().relative_to(output_path.parent.resolve()).as_posix()
@@ -258,30 +412,24 @@ def convert_file(
             f"> 说明: 正文由 open/otl JSON 解析；图片来自页面临时 CDN（若有）。"
         )
 
-    md = otl_to_markdown(raw, image_names=image_names, assets_rel=rel, source_note=note)
+    md = otl_to_markdown(
+        raw,
+        image_names=image_names,
+        image_map=resolved_map,
+        assets_rel=rel,
+        source_note=note,
+    )
     output_path.write_text(md, encoding="utf-8")
 
-    # count pictures in tree
-    pic_count = {"n": 0}
-
-    def count_pics(n: object) -> None:
-        if isinstance(n, dict):
-            if n.get("type") == "picture":
-                pic_count["n"] += 1
-            for v in n.values():
-                count_pics(v)
-        elif isinstance(n, list):
-            for i in n:
-                count_pics(i)
-
-    count_pics(raw)
+    pic_count = len(iter_otl_picture_attrs(raw))
+    saved = len({n for n in resolved_map.values() if n}) or sum(1 for n in image_names if n)
 
     return {
         "input": str(input_path),
         "output": str(output_path),
-        "assets_dir": str(assets_dir) if image_names else None,
-        "pictures_in_otl": pic_count["n"],
-        "images_saved": sum(1 for n in image_names if n),
+        "assets_dir": str(assets_dir) if saved else None,
+        "pictures_in_otl": pic_count,
+        "images_saved": saved,
         "markdown_chars": len(md),
     }
 
@@ -291,7 +439,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("input", type=Path, help="OTL JSON file")
     parser.add_argument("-o", "--output", type=Path, default=None)
     parser.add_argument("--assets-dir", type=Path, default=None)
-    parser.add_argument("--image", type=Path, action="append", default=[], help="Image file (repeatable, in order)")
+    parser.add_argument("--image", type=Path, action="append", default=[], help="Image file (repeatable, full-tree order)")
     parser.add_argument("--source-url", default=None, help="Optional source URL note in Markdown")
     args = parser.parse_args(argv)
 

@@ -72,8 +72,8 @@ Session files (platform-agnostic):
 - DOCX / EPUB / HTML: markitdown `keep_data_uris=True` on **convert()**, then decode data URIs to `<stem>_assets/`.
 - **PPTX**: per-slide **theme text** + **one full-slide screenshot**.
   PPTX→PDF via `office2pdf-python` (no system Office required); LibreOffice `soffice` is optional fallback; then PyMuPDF renders page PNGs.
-- WPS `.otl` intelligent docs: cannot use drive binary download (`notAllowType`); capture `open/otl` JSON + temporary CDN images via Playwright. **表格**（`outline-table`）渲染为 Markdown 表格；代码块带 `attrs.lang` 语言标签。
-  - 图片：优先 CDN 懒加载 + 尺寸对齐；若仍缺图，深滚并合并 `/attachment/shapes`，按 OTL `sourceKey` 下载 `raw`。
+- WPS `.otl` intelligent docs: cannot use drive binary download (`notAllowType`); capture `open/otl` JSON + temporary CDN images via Playwright. **表格**（`outline-table`）渲染为 Markdown 表格（单元格内图片一并输出）；代码块带 `attrs.lang` 语言标签。
+  - 图片：按 OTL `sourceKey` / `imgID` 映射到本地文件（避免表内图导致整篇错位）；优先 CDN 懒加载；若仍缺图，深滚并合并 `/attachment/shapes` 按 `sourceKey` 下载 `raw`，缺 key 时再滚一轮重试。
 
 ## Failure fallback (WPS)
 

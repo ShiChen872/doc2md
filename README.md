@@ -11,8 +11,8 @@ Works with Cursor, Codex, and other Agent Skills–compatible hosts. Copy this d
 - **PDF**: text via markitdown + embedded images via PyMuPDF; **scanned/image-only PDFs** auto-detected and OCR'd page-by-page
 - **Images** (png/jpg/…): keep original in `*_assets/` + OCR via [RapidOCR](https://github.com/RapidAI/RapidOCR) (`rapidocr-onnxruntime`; tesseract fallback)
 - Cloud: `kdocs.cn` / `365.kdocs.cn` share links
-- WPS intelligent docs (`.otl`): parse `open/otl` JSON + align CDN images to document order; tables rendered as Markdown tables
-- **OTL images**: prefer CDN match; if incomplete, scroll + `/attachment/shapes` by `sourceKey`
+- WPS intelligent docs (`.otl`): parse `open/otl` JSON; tables rendered as Markdown tables (including images in cells)
+- **OTL images**: place by `sourceKey` / `imgID` (not array index); prefer CDN match; if incomplete, scroll + `/attachment/shapes` by `sourceKey`, with a second pass for any still-missing keys
 - Images saved as relative Markdown links (not base64)
 
 ## Setup

@@ -148,8 +148,8 @@ def otl_to_markdown(
         if t == "picture":
             pic_i["n"] += 1
             idx = pic_i["n"] - 1
-            if 0 <= idx < len(image_names):
-                name = image_names[idx]
+            name = image_names[idx] if 0 <= idx < len(image_names) else ""
+            if name:
                 rel = f"{assets_rel}/{name}" if assets_rel else name
                 lines.append(f"![image {pic_i['n']}]({rel})")
                 lines.append("")
@@ -212,7 +212,7 @@ def convert_file(
     input_path: Path,
     output_path: Path,
     assets_dir: Path | None = None,
-    image_files: list[Path] | None = None,
+    image_files: list[Path | None] | None = None,
     source_url: str | None = None,
 ) -> dict:
     raw = load_otl(input_path)
@@ -225,8 +225,12 @@ def convert_file(
     if image_files:
         assets_dir.mkdir(parents=True, exist_ok=True)
         for i, src in enumerate(image_files, 1):
+            if src is None:
+                image_names.append("")  # placeholder slot — picture stays missing
+                continue
             src = Path(src)
             if not src.is_file():
+                image_names.append("")
                 continue
             dest_name = src.name if src.parent == assets_dir else f"image_{i:03d}{src.suffix or '.png'}"
             dest = assets_dir / dest_name
@@ -277,7 +281,7 @@ def convert_file(
         "output": str(output_path),
         "assets_dir": str(assets_dir) if image_names else None,
         "pictures_in_otl": pic_count["n"],
-        "images_saved": len(image_names),
+        "images_saved": sum(1 for n in image_names if n),
         "markdown_chars": len(md),
     }
 

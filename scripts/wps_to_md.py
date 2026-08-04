@@ -98,6 +98,146 @@ def iter_otl_pictures(raw: dict) -> list[dict]:
     return pics
 
 
+def _ext_from_shape(entry: dict, body: bytes, ctype: str = "") -> str:
+    ext = str(entry.get("raw_ext") or "").lower().lstrip(".")
+    if ext in {"png", "jpg", "jpeg", "webp", "gif"}:
+        return "jpg" if ext == "jpeg" else ext
+    if "webp" in ctype:
+        return "webp"
+    if "jpeg" in ctype or "jpg" in ctype or body.startswith(b"\xff\xd8"):
+        return "jpg"
+    if "gif" in ctype or body[:6] in (b"GIF87a", b"GIF89a"):
+        return "gif"
+    if body.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+    return "png"
+
+
+def merge_shapes_payload(payload: object, into: dict[str, dict]) -> int:
+    """Merge `/attachment/shapes` JSON into sourceKey → shape entry. Returns new keys."""
+    added = 0
+    data = None
+    if isinstance(payload, dict):
+        data = payload.get("data") if isinstance(payload.get("data"), dict) else None
+        if data is None and any(isinstance(v, dict) and ("url" in v or "raw" in v) for v in payload.values()):
+            data = payload
+    if not isinstance(data, dict):
+        return 0
+    for key, entry in data.items():
+        if not isinstance(key, str) or not isinstance(entry, dict):
+            continue
+        if not (entry.get("raw") or entry.get("url") or entry.get("thumbnail")):
+            continue
+        if key not in into:
+            added += 1
+        into[key] = entry
+    return added
+
+
+def shapes_cover_pictures(pictures: list[dict], shapes: dict[str, dict]) -> bool:
+    keys = [str(a.get("sourceKey") or "") for a in pictures]
+    wanted = [k for k in keys if k]
+    if not wanted:
+        return False
+    return all(k in shapes for k in wanted)
+
+
+def scroll_until_shapes(
+    page,
+    pictures: list[dict],
+    shapes: dict[str, dict],
+    *,
+    max_rounds: int = 100,
+    step_px: int = 1600,
+    pause_ms: int = 280,
+) -> None:
+    """Scroll the weboffice page to force lazy `/attachment/shapes` batches."""
+    if shapes_cover_pictures(pictures, shapes):
+        return
+    for _ in range(max_rounds):
+        if shapes_cover_pictures(pictures, shapes):
+            return
+        try:
+            page.mouse.wheel(0, step_px)
+            page.wait_for_timeout(pause_ms)
+        except Exception:
+            break
+    # one reverse pass then forward again for stragglers
+    try:
+        for _ in range(15):
+            page.mouse.wheel(0, -2500)
+            page.wait_for_timeout(180)
+        for _ in range(40):
+            if shapes_cover_pictures(pictures, shapes):
+                return
+            page.mouse.wheel(0, 1800)
+            page.wait_for_timeout(250)
+    except Exception:
+        pass
+
+
+def fetch_images_by_source_keys(
+    context,
+    pictures: list[dict],
+    shapes: dict[str, dict],
+    *,
+    referer: str,
+) -> list[tuple[str, bytes] | None]:
+    """Download shape `raw` (else url) for each picture in order. Missing → None."""
+    out: list[tuple[str, bytes] | None] = []
+    headers = {"Referer": referer, "Accept": "image/*,*/*"}
+    for attrs in pictures:
+        key = str(attrs.get("sourceKey") or "")
+        entry = shapes.get(key) if key else None
+        if not isinstance(entry, dict):
+            out.append(None)
+            continue
+        url = entry.get("raw") or entry.get("url") or entry.get("thumbnail")
+        if not url:
+            out.append(None)
+            continue
+        try:
+            r = context.request.get(str(url), headers=headers)
+            if r.status != 200:
+                out.append(None)
+                continue
+            body = r.body()
+            if not body or len(body) < 100:
+                out.append(None)
+                continue
+            ctype = r.headers.get("content-type") or ""
+            out.append((_ext_from_shape(entry, body, ctype), body))
+        except Exception:
+            out.append(None)
+    return out
+
+
+def fill_images_cdn_or_shapes(
+    pictures: list[dict],
+    cdn_ordered: list[tuple[str, bytes]],
+    shaped: list[tuple[str, bytes] | None] | None,
+) -> tuple[list[tuple[str, bytes] | None], str]:
+    """Choose image list aligned 1:1 with pictures.
+
+    Returns (aligned slots, strategy_name). Slot is None when missing.
+    """
+    n = len(pictures)
+    if n == 0:
+        return [], "none"
+    # Prefer CDN when complete; else fill via /attachment/shapes sourceKey map
+    if len(cdn_ordered) >= n:
+        return list(cdn_ordered[:n]), "otl-picture-matched"
+    # Incomplete CDN capture: sourceKey via /attachment/shapes
+    if shaped is not None and any(x is not None for x in shaped):
+        aligned: list[tuple[str, bytes] | None] = []
+        for i in range(n):
+            aligned.append(shaped[i] if i < len(shaped) else None)
+        return aligned, "otl-shapes-sourcekey"
+    # Degraded: keep whatever CDN matched (prefix only — may mis-align if gaps
+    # were in the middle; still better than empty for light docs)
+    aligned = list(cdn_ordered) + [None] * max(0, n - len(cdn_ordered))
+    return aligned[:n], "otl-picture-matched-partial"
+
 def image_pixel_size(data: bytes) -> tuple[int, int] | None:
     import io
 
@@ -256,21 +396,26 @@ def share_to_markdown(url: str, output_md: Path) -> dict:
         context = browser.new_context(storage_state=str(state))
 
         # --- link meta ---
+        # Prefer 365 / www first: drive.kdocs.cn often hangs from some networks.
         meta_urls = [
-            f"https://drive.kdocs.cn/api/v5/links/{sid}",
-            f"https://www.kdocs.cn/3rd/drive/api/v5/links/{sid}",
             f"https://365.kdocs.cn/3rd/drive/api/v5/links/{sid}",
+            f"https://www.kdocs.cn/3rd/drive/api/v5/links/{sid}",
+            f"https://drive.kdocs.cn/api/v5/links/{sid}",
         ]
         meta = None
         for mu in meta_urls:
-            r = context.request.get(
-                mu,
-                headers={
-                    "Accept": "application/json",
-                    "Referer": url,
-                    "Origin": "https://365.kdocs.cn",
-                },
-            )
+            try:
+                r = context.request.get(
+                    mu,
+                    headers={
+                        "Accept": "application/json",
+                        "Referer": url,
+                        "Origin": "https://365.kdocs.cn",
+                    },
+                    timeout=15000,
+                )
+            except Exception:
+                continue
             if r.status == 200:
                 try:
                     meta = r.json()
@@ -304,23 +449,32 @@ def share_to_markdown(url: str, output_md: Path) -> dict:
         if file_id and group_id and not is_otl:
             dl_apis = [
                 (
-                    f"https://drive.kdocs.cn/api/v5/groups/{group_id}/files/{file_id}/download"
+                    f"https://365.kdocs.cn/3rd/drive/api/v5/groups/{group_id}/files/{file_id}/download"
                     f"?isblocks=false&support_checksums=md5,sha1"
                 ),
                 (
                     f"https://www.kdocs.cn/3rd/drive/api/v5/groups/{group_id}/files/{file_id}/download"
                     f"?isblocks=false&support_checksums=md5,sha1"
                 ),
+                (
+                    f"https://drive.kdocs.cn/api/v5/groups/{group_id}/files/{file_id}/download"
+                    f"?isblocks=false&support_checksums=md5,sha1"
+                ),
             ]
             for api in dl_apis:
-                r = context.request.get(
-                    api,
-                    headers={
-                        "Accept": "application/json",
-                        "Referer": url,
-                        "Origin": "https://365.kdocs.cn",
-                    },
-                )
+                try:
+                    r = context.request.get(
+                        api,
+                        headers={
+                            "Accept": "application/json",
+                            "Referer": url,
+                            "Origin": "https://365.kdocs.cn",
+                        },
+                        timeout=15000,
+                    )
+                except Exception as e:
+                    result["download_error"] = {"timeout_or_error": str(e)[:200]}
+                    continue
                 if r.status != 200:
                     # notAllowType / auth errors → fall through to OTL path
                     try:
@@ -337,7 +491,10 @@ def share_to_markdown(url: str, output_md: Path) -> dict:
                 )
                 if not dl_url:
                     continue
-                fr = context.request.get(dl_url)
+                try:
+                    fr = context.request.get(dl_url, timeout=60000)
+                except Exception:
+                    continue
                 if fr.status != 200:
                     continue
                 data = fr.body()
@@ -359,6 +516,7 @@ def share_to_markdown(url: str, output_md: Path) -> dict:
         # --- OTL / online-only path ---
         otl_bytes: dict[str, bytes | None] = {"data": None}
         images: list[tuple[str, str, bytes]] = []
+        shapes_map: dict[str, dict] = {}
 
         page = context.new_page()
 
@@ -366,6 +524,12 @@ def share_to_markdown(url: str, output_md: Path) -> dict:
             u = resp.url
             ctype = resp.headers.get("content-type") or ""
             if resp.status != 200:
+                return
+            if "/attachment/shapes" in u:
+                try:
+                    merge_shapes_payload(resp.json(), shapes_map)
+                except Exception:
+                    pass
                 return
             if "/open/otl" in u and "octet-stream" in ctype:
                 try:
@@ -386,8 +550,13 @@ def share_to_markdown(url: str, output_md: Path) -> dict:
             images.append((u, ctype, body))
 
         page.on("response", on_response)
-        page.goto(url, wait_until="networkidle", timeout=120000)
-        page.wait_for_timeout(4000)
+        # WPS weboffice keeps websockets/polling alive — networkidle often never settles.
+        page.goto(url, wait_until="domcontentloaded", timeout=120000)
+        try:
+            page.wait_for_load_state("load", timeout=30000)
+        except Exception:
+            pass
+        page.wait_for_timeout(5000)
         try:
             page.mouse.wheel(0, 2500)
             page.wait_for_timeout(2500)
@@ -405,10 +574,9 @@ def share_to_markdown(url: str, output_md: Path) -> dict:
         except Exception:
             pass
 
-        browser.close()
-
         data = otl_bytes["data"]
         if not data:
+            browser.close()
             raise WpsError(
                 "Could not capture open/otl content. "
                 "Session may lack permission, or the doc type is unsupported. "
@@ -417,7 +585,6 @@ def share_to_markdown(url: str, output_md: Path) -> dict:
 
         stem = safe_stem(Path(fname).stem if fname else sid)
         otl_path = work / f"{stem}.otl.json"
-        # normalize to pretty json text
         try:
             parsed = json.loads(data.decode("utf-8"))
             otl_path.write_text(json.dumps(parsed, ensure_ascii=False), encoding="utf-8")
@@ -425,34 +592,53 @@ def share_to_markdown(url: str, output_md: Path) -> dict:
             otl_path.write_bytes(data)
             parsed = json.loads(otl_path.read_text(encoding="utf-8"))
 
+        pictures = iter_otl_pictures(parsed)
+        cdn_ordered = match_images_to_pictures(pictures, images)
+
+        shaped: list[tuple[str, bytes] | None] | None = None
+        if len(cdn_ordered) < len(pictures) and pictures:
+            # CDN incomplete: scroll + /attachment/shapes by sourceKey
+            scroll_until_shapes(page, pictures, shapes_map)
+            shaped = fetch_images_by_source_keys(
+                context, pictures, shapes_map, referer=url
+            )
+            result["shapes_keys"] = len(shapes_map)
+            result["shapes_downloaded"] = sum(1 for x in shaped if x is not None)
+
+        browser.close()
+
+        aligned, order_name = fill_images_cdn_or_shapes(pictures, cdn_ordered, shaped)
+
         assets_dir = output_md.parent / f"{output_md.stem}_assets"
         assets_dir.mkdir(parents=True, exist_ok=True)
-        # clear previous
         for old in assets_dir.glob("image_*"):
             old.unlink()
 
-        pictures = iter_otl_pictures(parsed)
-        ordered = match_images_to_pictures(pictures, images)
-
-        image_names: list[str] = []
-        for i, (ext, body) in enumerate(ordered, 1):
+        image_files: list[Path | None] = []
+        saved = 0
+        for i, slot in enumerate(aligned, 1):
+            if slot is None:
+                image_files.append(None)
+                continue
+            ext, body = slot
             name = f"image_{i:03d}.{ext}"
-            (assets_dir / name).write_bytes(body)
-            image_names.append(name)
+            dest = assets_dir / name
+            dest.write_bytes(body)
+            image_files.append(dest)
+            saved += 1
 
-        # If matching found fewer images than pictures, keep placeholders via otl_to_md
         stats = convert_file(
             otl_path,
             output_md,
             assets_dir=assets_dir,
-            image_files=[assets_dir / n for n in image_names],
+            image_files=image_files,
             source_url=url,
         )
         result["mode"] = "otl"
         result["otl_json"] = str(otl_path)
         result["pictures_in_otl"] = len(pictures)
-        result["images"] = len(image_names)
-        result["image_order"] = "otl-picture-matched"
+        result["images"] = saved
+        result["image_order"] = order_name
         result["convert"] = stats
         return result
 

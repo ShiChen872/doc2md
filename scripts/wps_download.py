@@ -175,8 +175,12 @@ def download_share(url: str, output: Path | None) -> Path:
                         pass
 
         page.on("response", on_response)
-        page.goto(url, wait_until="networkidle", timeout=120000)
-        page.wait_for_timeout(3000)
+        page.goto(url, wait_until="domcontentloaded", timeout=120000)
+        try:
+            page.wait_for_load_state("load", timeout=30000)
+        except Exception:
+            pass
+        page.wait_for_timeout(5000)
         browser.close()
 
         data = otl_bytes["data"]

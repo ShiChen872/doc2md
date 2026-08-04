@@ -122,3 +122,42 @@ def test_ensure_session_missing(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(wtm, "DEFAULT_STATE", tmp_path / "nope.json")
     with pytest.raises(wtm.WpsError):
         wtm.ensure_session()
+
+
+def test_merge_shapes_payload_and_cover():
+    into: dict = {}
+    n = wtm.merge_shapes_payload(
+        {"data": {"SK1": {"raw": "http://a", "raw_ext": "png"}, "SK2": {"url": "http://b"}}},
+        into,
+    )
+    assert n == 2
+    assert set(into) == {"SK1", "SK2"}
+    pics = [{"sourceKey": "SK1"}, {"sourceKey": "SK2"}, {"sourceKey": "SK3"}]
+    assert not wtm.shapes_cover_pictures(pics, into)
+    into["SK3"] = {"thumbnail": "http://c"}
+    assert wtm.shapes_cover_pictures(pics, into)
+
+
+def test_fill_images_prefers_cdn_when_complete():
+    pics = [{"sourceKey": "a"}, {"sourceKey": "b"}]
+    cdn = [("png", b"1"), ("jpg", b"2")]
+    aligned, name = wtm.fill_images_cdn_or_shapes(pics, cdn, None)
+    assert name == "otl-picture-matched"
+    assert aligned == cdn
+
+
+def test_fill_images_uses_shapes_when_cdn_incomplete():
+    pics = [{"sourceKey": "a"}, {"sourceKey": "b"}, {"sourceKey": "c"}]
+    cdn = [("png", b"only-one")]
+    shaped = [("png", b"A"), None, ("webp", b"C")]
+    aligned, name = wtm.fill_images_cdn_or_shapes(pics, cdn, shaped)
+    assert name == "otl-shapes-sourcekey"
+    assert aligned[0] == ("png", b"A")
+    assert aligned[1] is None
+    assert aligned[2] == ("webp", b"C")
+
+
+def test_ext_from_shape():
+    assert wtm._ext_from_shape({"raw_ext": "jpeg"}, b"") == "jpg"
+    assert wtm._ext_from_shape({}, b"\x89PNG\r\n\x1a\nxxxx") == "png"
+    assert wtm._ext_from_shape({}, b"\xff\xd8\xff") == "jpg"

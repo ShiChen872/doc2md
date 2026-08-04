@@ -12,6 +12,7 @@ Works with Cursor, Codex, and other Agent Skills–compatible hosts. Copy this d
 - **Images** (png/jpg/…): keep original in `*_assets/` + OCR via [RapidOCR](https://github.com/RapidAI/RapidOCR) (`rapidocr-onnxruntime`; tesseract fallback)
 - Cloud: `kdocs.cn` / `365.kdocs.cn` share links
 - WPS intelligent docs (`.otl`): parse `open/otl` JSON + align CDN images to document order; tables rendered as Markdown tables
+- **OTL images**: prefer CDN match; if incomplete, scroll + `/attachment/shapes` by `sourceKey`
 - Images saved as relative Markdown links (not base64)
 
 ## Setup

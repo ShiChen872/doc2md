@@ -1,6 +1,11 @@
 ---
 name: doc2md
-description: Convert local documents and WPS/金山文档 (kdocs / 365.kdocs) share links to Markdown with images extracted to a local assets folder. Use when the user asks to convert docx, pdf, pptx, xlsx, epub, html, WPS intelligent docs (.otl), or WPS cloud docs to Markdown, mentions markitdown, kdocs.cn share links, or wants document-to-markdown with preserved images.
+display_name: 文档转Markdown
+description: >-
+  将本地文档与 WPS/金山文档（kdocs / 365.kdocs）分享链接转为 Markdown，图片提取到本地 assets 目录。
+  支持 docx、pdf、pptx、xlsx、epub、html、图片 OCR、WPS 智能文档（.otl）及云文档分享链接。
+  使用场景：(1) 云文档/分享链接转 Markdown；(2) 本地 Office/PDF 转 md 并保留图片；(3) OTL 智能文档结构化导出。
+  触发关键词：转markdown、转md、doc2md、文档转markdown、云文档转md、kdocs转md、otl转md、anything to markdown。
 ---
 
 # doc2md — documents to Markdown
@@ -68,6 +73,7 @@ Session files (platform-agnostic):
 - **PPTX**: per-slide **theme text** + **one full-slide screenshot**.
   PPTX→PDF via `office2pdf-python` (no system Office required); LibreOffice `soffice` is optional fallback; then PyMuPDF renders page PNGs.
 - WPS `.otl` intelligent docs: cannot use drive binary download (`notAllowType`); capture `open/otl` JSON + temporary CDN images via Playwright. **表格**（`outline-table`）渲染为 Markdown 表格；代码块带 `attrs.lang` 语言标签。
+  - 图片：优先 CDN 懒加载 + 尺寸对齐；若仍缺图，深滚并合并 `/attachment/shapes`，按 OTL `sourceKey` 下载 `raw`。
 
 ## Failure fallback (WPS)
 

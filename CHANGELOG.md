@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.2
+
+- WPS media shares (`plus.wps.cn/view/media/l/…`, `.mp4` etc.): export Markdown card + cover image
+- When original file download is denied, remux the share-page HLS preview stream to local `preview.mp4` with ffmpeg (if installed); embed `<video>` in Markdown
+- Note: preview MP4 is a transcoded stream, not the original upload
+
 ## v0.4.1
 
 - Feishu iframe embeds: use document height + 16:9 sizing, disable autoplay on common players, add plain video link fallback

@@ -28,7 +28,7 @@ Replace `<this-skill>` with the absolute path of this skill directory
 
 1. Classify input:
    - **Local path** → `convert.py`
-   - **kdocs / 365 share URL** → `wps_to_md.py` (one-shot to Markdown)
+   - **kdocs / 365 / plus.wps.cn share URL** → `wps_to_md.py` (Office/OTL/media)
    - **feishu.cn / larksuite.com wiki or docx URL** → `feishu_to_md.py`
 2. If WPS session missing/expired → run `wps_login.py` first (opens Chrome for the user to log in).
    If Feishu session missing/expired → run `feishu_login.py` first.
@@ -50,12 +50,17 @@ Also accepts `.otl.json` (WPS intelligent-doc JSON).
 
 # Convert share link → Markdown (+ assets)
 ~/.config/doc2md/venv/bin/python <this-skill>/scripts/wps_to_md.py 'https://365.kdocs.cn/l/XXXX' -o /path/to/out.md
+
+# Media / video shares (plus.wps.cn/view/media/l/… or .mp4 share)
+~/.config/doc2md/venv/bin/python <this-skill>/scripts/wps_to_md.py 'https://plus.wps.cn/view/media/l/XXXX' -o /path/to/out.md
 ```
 
 Session files (platform-agnostic):
 
 - `~/.config/doc2md/wps_storage_state.json` (Playwright — preferred)
 - `~/.config/doc2md/wps_cookie.txt` (Cookie string backup)
+
+**WPS media notes:** original file download is often denied on link shares. If `ffmpeg` is installed, doc2md remuxes the share-page HLS **preview** stream to `*_assets/preview.mp4` (transcoded, not the original upload). Cover image is saved when available.
 
 ### Feishu / Lark share link
 

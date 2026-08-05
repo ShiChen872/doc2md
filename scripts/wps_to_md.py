@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
 import subprocess
 import sys
 import zipfile
@@ -29,10 +30,22 @@ CFG = Path.home() / ".config" / "doc2md"
 DEFAULT_STATE = CFG / "wps_storage_state.json"
 SCRIPTS = Path(__file__).resolve().parent
 SHARE_ID_RE = re.compile(
-    r"(?:kdocs\.cn|wps\.cn)/(?:l|view/l)/([A-Za-z0-9_-]+)",
+    r"(?:kdocs\.cn|wps\.cn)/(?:l|view/l|view/media/l)/([A-Za-z0-9_-]+)",
     re.IGNORECASE,
 )
 SAFE_NAME_RE = re.compile(r"[^\w.\u4e00-\u9fff\-]+")
+MEDIA_EXTS = {
+    ".mp4",
+    ".mov",
+    ".mkv",
+    ".webm",
+    ".avi",
+    ".m4v",
+    ".wmv",
+    ".flv",
+    ".mpeg",
+    ".mpg",
+}
 
 
 class WpsError(Exception):
@@ -44,6 +57,176 @@ def extract_share_id(url: str) -> str:
     if not m:
         raise WpsError(f"Cannot parse share id from URL: {url}")
     return m.group(1)
+
+
+def is_media_filename(fname: str) -> bool:
+    return Path(fname or "").suffix.lower() in MEDIA_EXTS
+
+
+def format_bytes(n: int | float | None) -> str:
+    if n is None:
+        return "unknown"
+    try:
+        n = float(n)
+    except (TypeError, ValueError):
+        return "unknown"
+    units = ["B", "KB", "MB", "GB", "TB"]
+    i = 0
+    while n >= 1024 and i < len(units) - 1:
+        n /= 1024
+        i += 1
+    if i == 0:
+        return f"{int(n)} {units[i]}"
+    return f"{n:.1f} {units[i]}"
+
+
+def find_ffmpeg() -> str | None:
+    """Return ffmpeg binary path if available on PATH / Homebrew."""
+    found = shutil.which("ffmpeg")
+    if found:
+        return found
+    for candidate in (
+        "/opt/homebrew/bin/ffmpeg",
+        "/usr/local/bin/ffmpeg",
+    ):
+        if Path(candidate).is_file():
+            return candidate
+    return None
+
+
+def cookie_header_from_playwright(cookies: list[dict]) -> str:
+    """Build a Cookie header from Playwright cookie dicts (WPS-related domains)."""
+    parts: list[str] = []
+    seen: set[str] = set()
+    for c in cookies:
+        domain = c.get("domain") or ""
+        if not any(x in domain for x in ("wps.cn", "kdocs.cn", "wpscdn.cn", "ksyuncs.com")):
+            continue
+        name = c.get("name") or ""
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        parts.append(f"{name}={c.get('value') or ''}")
+    return "; ".join(parts)
+
+
+def remux_hls_with_ffmpeg(
+    stream_url: str,
+    output_mp4: Path,
+    *,
+    cookie_header: str,
+    referer: str,
+    ffmpeg_bin: str | None = None,
+    timeout_sec: int = 600,
+) -> dict:
+    """Remux HLS preview stream to MP4 via ffmpeg (-c copy). Returns stats dict."""
+    ffmpeg_bin = ffmpeg_bin or find_ffmpeg()
+    if not ffmpeg_bin:
+        return {"ok": False, "error": "ffmpeg not found"}
+    output_mp4.parent.mkdir(parents=True, exist_ok=True)
+    headers = (
+        f"Cookie: {cookie_header}\r\n"
+        f"Referer: {referer}\r\n"
+        "User-Agent: Mozilla/5.0\r\n"
+    )
+    cmd = [
+        ffmpeg_bin,
+        "-y",
+        "-headers",
+        headers,
+        "-i",
+        stream_url,
+        "-c",
+        "copy",
+        "-bsf:a",
+        "aac_adtstoasc",
+        str(output_mp4),
+    ]
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout_sec,
+        )
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": f"ffmpeg timeout after {timeout_sec}s"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
+    if proc.returncode != 0 or not output_mp4.is_file() or output_mp4.stat().st_size < 1000:
+        err = (proc.stderr or proc.stdout or "")[-800:]
+        return {"ok": False, "error": err or f"ffmpeg exit {proc.returncode}"}
+    return {
+        "ok": True,
+        "path": str(output_mp4),
+        "bytes": output_mp4.stat().st_size,
+        "ffmpeg": ffmpeg_bin,
+    }
+
+
+def build_media_markdown(
+    *,
+    title: str,
+    source_url: str,
+    fname: str,
+    fsize: int | None,
+    cover_rel: str | None,
+    stream_path: str | None,
+    download_blocked: bool,
+    permission: str | None = None,
+    preview_rel: str | None = None,
+    preview_bytes: int | None = None,
+) -> str:
+    """Markdown card for a WPS media (video/audio) share — no Office body."""
+    lines = [
+        f"> 来源: {source_url}",
+        "> 类型: WPS 媒体文件 (video/audio)",
+    ]
+    if permission:
+        lines.append(f"> 权限: {permission}")
+    lines.append("")
+    lines.append(f"# {title}")
+    lines.append("")
+    lines.append(f"- 文件名: `{fname}`")
+    lines.append(f"- 原始大小: {format_bytes(fsize)}")
+    lines.append(f"- 在线打开: [{source_url}]({source_url})")
+    lines.append("")
+    if cover_rel:
+        lines.append(f"![封面]({cover_rel})")
+        lines.append("")
+    lines.append("## 视频")
+    lines.append("")
+    if preview_rel:
+        lines.append("本地预览版（分享页 HLS 转码流，ffmpeg 合成，非原始上传文件）:")
+        lines.append("")
+        lines.append(f"[{Path(preview_rel).name}]({preview_rel})")
+        lines.append("")
+        lines.append(
+            f'<video src="{preview_rel}" controls preload="metadata" width="100%"></video>'
+        )
+        lines.append("")
+        if preview_bytes is not None:
+            lines.append(f"- 本地预览文件大小: {format_bytes(preview_bytes)}")
+            lines.append("")
+    lines.append(f"在线预览（分享页）: [{title}]({source_url})")
+    lines.append("")
+    if stream_path and not preview_rel:
+        lines.append(f"预览流 (HLS): `{stream_path}`")
+        lines.append("")
+        lines.append(
+            "说明: 分享页提供转码预览流（m3u8）。安装 ffmpeg 后再次运行可尝试合成本地 `preview.mp4`。"
+        )
+        lines.append("")
+    elif preview_rel:
+        lines.append("说明: 本地文件来自分享页转码预览流，不是原始上传文件。")
+        lines.append("")
+    if download_blocked:
+        lines.append(
+            "<!-- download: original file download denied for this share "
+            "(preview stream / cover may still be available) -->"
+        )
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def normalize_url(url: str) -> str:
@@ -397,7 +580,9 @@ def share_to_markdown(url: str, output_md: Path) -> dict:
 
         # --- link meta ---
         # Prefer 365 / www first: drive.kdocs.cn often hangs from some networks.
+        # drive.wps.cn works well for plus.wps.cn media shares.
         meta_urls = [
+            f"https://drive.wps.cn/api/v5/links/{sid}?review=true",
             f"https://365.kdocs.cn/3rd/drive/api/v5/links/{sid}",
             f"https://www.kdocs.cn/3rd/drive/api/v5/links/{sid}",
             f"https://drive.kdocs.cn/api/v5/links/{sid}",
@@ -443,6 +628,151 @@ def share_to_markdown(url: str, output_md: Path) -> dict:
         )
 
         is_otl = fname.lower().endswith(".otl") or ftype.lower() in {"otl", "o", "outline"}
+        is_media = is_media_filename(fname) or "/view/media/" in url.lower()
+
+        # --- media / video share: Markdown card + cover (no Office body) ---
+        if is_media and file_id and group_id:
+            stem = safe_stem(Path(fname).stem if fname else sid)
+            if output_md.name in {"out.md", "output.md"} or output_md.stem == "wps_out":
+                output_md = output_md.with_name(f"{stem}.md")
+                result["output"] = str(output_md)
+
+            assets_dir = output_md.parent / f"{output_md.stem}_assets"
+            assets_dir.mkdir(parents=True, exist_ok=True)
+            cover_rel = None
+            stream_path = None
+            download_blocked = True
+            permission = str(
+                (meta.get("user_permission") or (meta.get("linkinfo") or {}).get("link_permission") or "")
+            )
+            fsize = (meta.get("fileinfo") or {}).get("fsize")
+            try:
+                fsize_i = int(fsize) if fsize is not None else None
+            except (TypeError, ValueError):
+                fsize_i = None
+
+            preview_urls = [
+                f"https://api.wps.cn/office/v5/extensions/preview/groups/{group_id}/files/{file_id}/media/preview?preview_style=link",
+                f"https://plus.wps.cn/office/v5/extensions/preview/groups/{group_id}/files/{file_id}/media/preview?preview_style=link",
+            ]
+            preview = None
+            for pu in preview_urls:
+                try:
+                    pr = context.request.get(
+                        pu,
+                        headers={"Accept": "application/json", "Referer": url},
+                        timeout=20000,
+                    )
+                except Exception:
+                    continue
+                if pr.status != 200:
+                    continue
+                try:
+                    preview = pr.json()
+                    break
+                except Exception:
+                    continue
+
+            if isinstance(preview, dict):
+                pdata = preview.get("data") if isinstance(preview.get("data"), dict) else preview
+                if isinstance(pdata, dict):
+                    stream_path = pdata.get("stream_path") or pdata.get("streamPath")
+                    cover_url = pdata.get("video_cover") or pdata.get("videoCover")
+                    if cover_url:
+                        try:
+                            cr = context.request.get(str(cover_url), timeout=30000)
+                            if cr.status == 200:
+                                body = cr.body()
+                                ctype = (cr.headers.get("content-type") or "").lower()
+                                ext = ".jpg"
+                                if "png" in ctype:
+                                    ext = ".png"
+                                elif "webp" in ctype:
+                                    ext = ".webp"
+                                cover_name = f"cover{ext}"
+                                (assets_dir / cover_name).write_bytes(body)
+                                cover_rel = f"{assets_dir.name}/{cover_name}"
+                                result["cover"] = str(assets_dir / cover_name)
+                        except Exception as e:
+                            result["cover_error"] = str(e)[:200]
+
+            # Probe original download (usually denied for link shares)
+            try:
+                dr = context.request.get(
+                    f"https://drive.wps.cn/api/v3/groups/{group_id}/files/{file_id}/download",
+                    headers={"Accept": "application/json", "Referer": url},
+                    timeout=15000,
+                )
+                if dr.status == 200:
+                    download_blocked = False
+                    result["download_probe"] = "ok"
+                else:
+                    try:
+                        result["download_probe"] = dr.json()
+                    except Exception:
+                        result["download_probe"] = {"status": dr.status, "text": dr.text()[:200]}
+            except Exception as e:
+                result["download_probe"] = {"error": str(e)[:200]}
+
+            preview_rel = None
+            preview_bytes = None
+            # Optional: remux HLS preview with ffmpeg when original download is blocked
+            if stream_path and download_blocked and find_ffmpeg():
+                try:
+                    page = context.new_page()
+                    page.goto(url, wait_until="domcontentloaded", timeout=90000)
+                    page.wait_for_timeout(1500)
+                    cookie_header = cookie_header_from_playwright(context.cookies())
+                    page.close()
+                except Exception as e:
+                    cookie_header = ""
+                    result["preview_cookie_error"] = str(e)[:200]
+                if cookie_header:
+                    mp4_path = assets_dir / "preview.mp4"
+                    remux = remux_hls_with_ffmpeg(
+                        str(stream_path),
+                        mp4_path,
+                        cookie_header=cookie_header,
+                        referer=url,
+                    )
+                    result["preview_remux"] = {
+                        k: v for k, v in remux.items() if k != "error" or not remux.get("ok")
+                    }
+                    if remux.get("ok"):
+                        preview_rel = f"{assets_dir.name}/preview.mp4"
+                        preview_bytes = int(remux["bytes"])
+                    else:
+                        result["preview_remux_error"] = str(remux.get("error") or "")[:500]
+            elif stream_path and download_blocked and not find_ffmpeg():
+                result["preview_remux"] = {"ok": False, "error": "ffmpeg not found"}
+
+            title = Path(fname).stem or stem
+            md = build_media_markdown(
+                title=title,
+                source_url=url,
+                fname=fname,
+                fsize=fsize_i,
+                cover_rel=cover_rel,
+                stream_path=str(stream_path) if stream_path else None,
+                download_blocked=download_blocked,
+                permission=permission or None,
+                preview_rel=preview_rel,
+                preview_bytes=preview_bytes,
+            )
+            output_md.parent.mkdir(parents=True, exist_ok=True)
+            output_md.write_text(md, encoding="utf-8")
+            if stream_path:
+                (work / "stream_path.txt").write_text(str(stream_path) + "\n", encoding="utf-8")
+            result["mode"] = "media"
+            result["stream_path"] = stream_path
+            result["download_blocked"] = download_blocked
+            result["preview_video"] = str(assets_dir / "preview.mp4") if preview_rel else None
+            result["markdown_chars"] = len(md)
+            result["assets_dir"] = (
+                str(assets_dir) if (cover_rel or preview_rel) else None
+            )
+            browser.close()
+            return result
 
         # --- try binary download for Office files ---
         downloaded: Path | None = None

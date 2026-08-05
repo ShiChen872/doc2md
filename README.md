@@ -10,8 +10,9 @@ Works with Cursor, Codex, and other Agent Skills–compatible hosts. Copy this d
 - **PPTX**: theme text per slide + full-slide screenshots via `office2pdf-python` (LibreOffice optional fallback)
 - **PDF**: text via markitdown + embedded images via PyMuPDF; **scanned/image-only PDFs** auto-detected and OCR'd page-by-page
 - **Images** (png/jpg/…): keep original in `*_assets/` + OCR via [RapidOCR](https://github.com/RapidAI/RapidOCR) (`rapidocr-onnxruntime`; tesseract fallback)
-- Cloud: `kdocs.cn` / `365.kdocs.cn` share links; `feishu.cn` / `larksuite.com` wiki & docx
+- Cloud: `kdocs.cn` / `365.kdocs.cn` / `plus.wps.cn` share links; `feishu.cn` / `larksuite.com` wiki & docx
 - WPS intelligent docs (`.otl`): parse `open/otl` JSON; tables rendered as Markdown tables (including images in cells)
+- **WPS media** (`.mp4` / `view/media/l/`): Markdown card + cover; optional local `preview.mp4` via ffmpeg HLS remux when original download is denied
 - **Feishu**: Playwright session (`feishu_login.py`) + in-page `PageMain` block tree → Markdown + assets
 - **OTL images**: place by `sourceKey` / `imgID` (not array index); prefer CDN match; if incomplete, scroll + `/attachment/shapes` by `sourceKey`, with a second pass for any still-missing keys
 - Images saved as relative Markdown links (not base64)
@@ -60,6 +61,9 @@ Image files and **scanned/image-only PDFs** are OCR'd to recover text.
 
 # Convert to Markdown
 ~/.config/doc2md/venv/bin/python scripts/wps_to_md.py 'https://365.kdocs.cn/l/XXXX' -o /path/to/out.md
+
+# Video / media share (needs ffmpeg on PATH for local preview.mp4)
+~/.config/doc2md/venv/bin/python scripts/wps_to_md.py 'https://plus.wps.cn/view/media/l/XXXX' -o /path/to/out.md
 ```
 
 ### Feishu / Lark share link

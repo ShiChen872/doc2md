@@ -23,6 +23,74 @@ def test_extract_share_id_view_path():
     assert wtm.extract_share_id("https://kdocs.cn/view/l/xyz_99") == "xyz_99"
 
 
+def test_extract_share_id_media_path():
+    assert (
+        wtm.extract_share_id("https://plus.wps.cn/view/media/l/cnU6phmAZZKr")
+        == "cnU6phmAZZKr"
+    )
+
+
+def test_is_media_filename():
+    assert wtm.is_media_filename("comate-产品介绍.mp4")
+    assert wtm.is_media_filename("a.MOV")
+    assert not wtm.is_media_filename("notes.docx")
+
+
+def test_build_media_markdown_includes_cover_and_stream():
+    md = wtm.build_media_markdown(
+        title="演示",
+        source_url="https://plus.wps.cn/view/media/l/abc",
+        fname="演示.mp4",
+        fsize=1024 * 1024,
+        cover_rel="演示_assets/cover.jpg",
+        stream_path="https://example.com/x.m3u8",
+        download_blocked=True,
+        permission="readonly",
+    )
+    assert "# 演示" in md
+    assert "![封面](演示_assets/cover.jpg)" in md
+    assert "m3u8" in md
+    assert "download: original file download denied" in md
+    assert wtm.format_bytes(1024 * 1024) == "1.0 MB"
+
+
+def test_build_media_markdown_with_local_preview():
+    md = wtm.build_media_markdown(
+        title="演示",
+        source_url="https://plus.wps.cn/view/media/l/abc",
+        fname="演示.mp4",
+        fsize=800_000_000,
+        cover_rel="演示_assets/cover.jpg",
+        stream_path="https://example.com/x.m3u8",
+        download_blocked=True,
+        preview_rel="演示_assets/preview.mp4",
+        preview_bytes=90_000_000,
+    )
+    assert "preview.mp4" in md
+    assert "<video src=" in md
+    assert "m3u8" not in md  # prefer local file over raw stream URL
+    assert "非原始" in md or "不是原始" in md
+
+
+def test_find_ffmpeg_homebrew_or_path():
+    # Soft check: helper should return str|None without raising
+    path = wtm.find_ffmpeg()
+    assert path is None or Path(path).name == "ffmpeg"
+
+
+def test_cookie_header_from_playwright_filters_domains():
+    header = wtm.cookie_header_from_playwright(
+        [
+            {"name": "wps_sid", "value": "abc", "domain": ".wps.cn"},
+            {"name": "other", "value": "x", "domain": "example.com"},
+            {"name": "wps_sid", "value": "dup", "domain": "drive.wps.cn"},
+        ]
+    )
+    assert "wps_sid=abc" in header
+    assert "example.com" not in header
+    assert header.count("wps_sid=") == 1
+
+
 def test_extract_share_id_invalid():
     with pytest.raises(wtm.WpsError):
         wtm.extract_share_id("https://example.com/no/share")

@@ -47,6 +47,15 @@ Image files and **scanned/image-only PDFs** are OCR'd to recover text.
 
 ## Usage
 
+### Unified CLI (recommended)
+
+```bash
+~/.config/doc2md/venv/bin/python scripts/doc2md.py /path/to/doc.docx -o /path/to/out.md
+~/.config/doc2md/venv/bin/python scripts/doc2md.py 'https://365.kdocs.cn/l/XXXX' -o /path/to/out.md
+~/.config/doc2md/venv/bin/python scripts/doc2md.py 'https://plus.wps.cn/view/media/l/XXXX' -o /path/to/out.md
+~/.config/doc2md/venv/bin/python scripts/doc2md.py 'https://xxx.feishu.cn/wiki/XXXX' -o /path/to/out.md
+```
+
 ### Local file
 
 ```bash
@@ -82,6 +91,7 @@ Session files live under `~/.config/doc2md/` (not in this repo):
 
 | Script | Role |
 |--------|------|
+| `doc2md.py` | Unified CLI (local / WPS / Feishu) |
 | `convert.py` | Local Office/PDF/OTL-JSON → Markdown |
 | `wps_login.py` | Headed Chrome login |
 | `wps_to_md.py` | Share URL → Markdown |

@@ -2,10 +2,10 @@
 name: doc2md
 display_name: 文档转Markdown
 description: >-
-  将本地文档、WPS/金山文档（kdocs / 365.kdocs）与飞书/Lark 云文档（wiki / docx）分享链接转为 Markdown，图片提取到本地 assets 目录。
-  支持 docx、pdf、pptx、xlsx、epub、html、图片 OCR、WPS 智能文档（.otl）及云文档分享链接。
-  使用场景：(1) 云文档/分享链接转 Markdown；(2) 本地 Office/PDF 转 md 并保留图片；(3) OTL / 飞书文档结构化导出。
-  触发关键词：转markdown、转md、doc2md、文档转markdown、云文档转md、kdocs转md、飞书转md、feishu转md、otl转md、anything to markdown。
+  将本地文档、WPS/金山文档（kdocs / 365.kdocs / plus.wps.cn）与飞书/Lark 云文档（wiki / docx）分享链接转为 Markdown，图片提取到本地 assets 目录。
+  支持 docx、pdf、pptx、xlsx、epub、html、图片 OCR、WPS 智能文档（.otl）、WPS 媒体/视频分享（view/media）及云文档分享链接。
+  使用场景：(1) 云文档/分享链接转 Markdown；(2) 本地 Office/PDF 转 md 并保留图片；(3) OTL / 飞书文档结构化导出；(4) WPS 视频分享转 md（封面 + 预览 mp4）。
+  触发关键词：转markdown、转md、doc2md、文档转markdown、云文档转md、kdocs转md、plus.wps、wps视频、媒体分享、view/media、飞书转md、feishu转md、otl转md、anything to markdown。
 ---
 
 # doc2md — documents to Markdown
@@ -26,13 +26,18 @@ Replace `<this-skill>` with the absolute path of this skill directory
 
 ## Workflow
 
-1. Classify input:
-   - **Local path** → `convert.py`
-   - **kdocs / 365 / plus.wps.cn share URL** → `wps_to_md.py` (Office/OTL/media)
-   - **feishu.cn / larksuite.com wiki or docx URL** → `feishu_to_md.py`
+1. **Prefer the unified CLI** `doc2md.py` — it classifies local path vs WPS vs Feishu.
 2. If WPS session missing/expired → run `wps_login.py` first (opens Chrome for the user to log in).
    If Feishu session missing/expired → run `feishu_login.py` first.
 3. After conversion, report image counts and confirm `*_assets/` beside the `.md`.
+
+### Recommended (any input)
+
+```bash
+~/.config/doc2md/venv/bin/python <this-skill>/scripts/doc2md.py <path_or_url> -o /path/to/out.md
+```
+
+Accepts: local Office/PDF/OTL-JSON; `kdocs.cn` / `365.kdocs.cn` / `plus.wps.cn` shares (including `view/media` video); Feishu/Lark `wiki` / `docx` URLs.
 
 ### Local file
 
@@ -42,7 +47,7 @@ Replace `<this-skill>` with the absolute path of this skill directory
 
 Also accepts `.otl.json` (WPS intelligent-doc JSON).
 
-### WPS share link (recommended)
+### WPS share link
 
 ```bash
 # First time / cookie expired — user completes login in Chrome
@@ -78,9 +83,10 @@ Session: `~/.config/doc2md/feishu_storage_state.json` (and `feishu_cookie.txt` b
 
 | Script | Role |
 |--------|------|
+| `doc2md.py` | **Unified CLI** — classify path/URL then convert |
 | `convert.py` | Local Office/PDF/HTML/OTL-JSON → Markdown |
 | `wps_login.py` | Headed Chrome login, save session |
-| `wps_to_md.py` | Share URL → Markdown (Office download or OTL parse) |
+| `wps_to_md.py` | WPS share URL → Markdown (Office / OTL / media) |
 | `wps_download.py` | Share URL → raw file / `.otl.json` only |
 | `otl_to_md.py` | OTL JSON → Markdown |
 | `feishu_login.py` | Headed Chrome login for Feishu/Lark |
@@ -111,4 +117,4 @@ Session: `~/.config/doc2md/feishu_storage_state.json` (and `feishu_cookie.txt` b
 
 ## Supported formats
 
-markitdown formats (docx, pptx, xlsx, pdf, html, epub, …) + WPS share links (including 365 / `.otl`) + Feishu/Lark wiki & docx links.
+markitdown formats (docx, pptx, xlsx, pdf, html, epub, …) + WPS share links (365 / `.otl` / `plus.wps.cn` media) + Feishu/Lark wiki & docx links.

@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.3
+
+- Unified CLI `doc2md.py`: classify local path / WPS share / Feishu URL and dispatch
+- SKILL triggers: `plus.wps.cn`, `view/media`, WPS video/media share wording
+- Tests for URL/path classification and default output names
+
 ## v0.4.2
 
 - WPS media shares (`plus.wps.cn/view/media/l/…`, `.mp4` etc.): export Markdown card + cover image

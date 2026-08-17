@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.4.4
+
+- Feishu code blocks: map CodeLanguage enum (e.g. 49 → `python`) instead of dropping numeric languages
+- Feishu `fallback` blocks: unwrap `snapshot.type` so code / file / bookmark still render; wait recursively for code and file to hydrate
+- File attachments nested under views/grids are collected and downloaded
+- WPS/Feishu: if the session is missing or expired, conversion opens headed Chrome for the user to log in, then retries once (`--no-login` to skip)
+
 ## v0.4.3
 
 - Unified CLI `doc2md.py`: classify local path / WPS share / Feishu URL and dispatch

@@ -52,7 +52,7 @@ def safe_name(name: str) -> str:
     return SAFE_NAME_RE.sub("_", name).strip("._") or "wps_document"
 
 
-def download_share(url: str, output: Path | None) -> Path:
+def download_share(url: str, output: Path | None, *, auto_login: bool = True) -> Path:
     from playwright.sync_api import sync_playwright
     import io
     import zipfile
@@ -62,10 +62,23 @@ def download_share(url: str, output: Path | None) -> Path:
     if not sid:
         raise WpsDownloadError(f"Cannot parse share id from URL: {url}")
     if not DEFAULT_STATE.is_file():
-        raise WpsDownloadError(
-            f"Session not found: {DEFAULT_STATE}\n"
-            f"Run: {sys.executable} {SCRIPTS / 'wps_login.py'} '{url}'"
-        )
+        if auto_login:
+            print(
+                "WPS session missing — opening Chrome. "
+                "Complete login in the window; download will continue.",
+                file=sys.stderr,
+            )
+            from wps_login import LoginError, run_login
+
+            try:
+                run_login(url)
+            except LoginError as e:
+                raise WpsDownloadError(str(e)) from e
+        if not DEFAULT_STATE.is_file():
+            raise WpsDownloadError(
+                f"Session not found: {DEFAULT_STATE}\n"
+                f"Run: {sys.executable} {SCRIPTS / 'wps_login.py'} '{url}'"
+            )
 
     with sync_playwright() as p:
         browser = p.chromium.launch(channel="chrome", headless=True)
@@ -222,10 +235,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("-o", "--output", type=Path, default=None)
     # keep old flag for compatibility (ignored; session uses storage_state)
     parser.add_argument("--cookie-file", type=Path, default=None, help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--no-login",
+        action="store_true",
+        help="Do not open Chrome if the WPS session is missing",
+    )
     args = parser.parse_args(argv)
 
     try:
-        download_share(args.url, args.output)
+        download_share(args.url, args.output, auto_login=not args.no_login)
     except WpsDownloadError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 1

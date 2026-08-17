@@ -41,6 +41,10 @@ LOGIN_HINTS = (
 DOC_HOST_HINTS = ("feishu.cn", "larksuite.com", "larkoffice.com")
 
 
+class LoginError(Exception):
+    """Interactive login failed or timed out."""
+
+
 def _on_login_page(url: str) -> bool:
     low = (url or "").lower()
     return any(h in low for h in LOGIN_HINTS)
@@ -119,7 +123,7 @@ def run_login(url: str, timeout_sec: int = 300) -> None:
 
         browser.close()
         if not ok:
-            raise SystemExit(
+            raise LoginError(
                 f"TIMEOUT: {timeout_sec}s 内未检测到完整登录。"
                 "请重试并完成飞书账号登录。"
             )

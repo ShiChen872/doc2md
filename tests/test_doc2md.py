@@ -68,3 +68,14 @@ def test_looks_like_url():
     assert cli.looks_like_url("https://kdocs.cn/l/x")
     assert cli.looks_like_url("365.kdocs.cn/l/x")
     assert not cli.looks_like_url("report.docx")
+
+
+def test_cli_no_login_flag():
+    import subprocess
+    import sys
+
+    help_text = subprocess.check_output(
+        [sys.executable, str(SCRIPTS / "doc2md.py"), "-h"],
+        text=True,
+    )
+    assert "--no-login" in help_text

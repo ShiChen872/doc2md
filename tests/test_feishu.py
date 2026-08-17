@@ -280,3 +280,143 @@ def test_collect_assets():
     assets = ftm.collect_assets(root)
     assert len(assets) == 2
     assert {a["asset_type"] for a in assets} == {"image", "file"}
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (49, "python"),
+        ("49", "python"),
+        (30, "javascript"),
+        (63, "typescript"),
+        (1, ""),
+        (75, "toml"),
+        (999, ""),
+        ("python", "python"),
+        ("JavaScript", "javascript"),
+        ("js", "javascript"),
+        ("C++", "cpp"),
+        ("Bash", "bash"),
+        ("Plain Text", ""),
+        ("", ""),
+        (None, ""),
+    ],
+)
+def test_resolve_code_language(raw, expected):
+    assert ftm.resolve_code_language(raw) == expected
+
+
+def test_code_block_numeric_language():
+    model = {
+        "title": "code",
+        "root": {
+            "type": "page",
+            "children": [
+                {
+                    "id": "c1",
+                    "type": "code",
+                    "zone_state": {"all_text": "print(1)\n"},
+                    "snapshot": {"type": "code", "language": 49},
+                    "children": [],
+                }
+            ],
+        },
+    }
+    md = ftm.blocks_to_markdown(model)
+    assert "```python\nprint(1)\n```" in md
+
+
+def test_fallback_code_and_file_blocks():
+    model = {
+        "title": "fallback",
+        "root": {
+            "type": "page",
+            "children": [
+                {
+                    "id": 81,
+                    "type": "fallback",
+                    "zone_state": {"all_text": "echo hi\n"},
+                    "snapshot": {"type": "code", "language": 7},
+                    "children": [],
+                },
+                {
+                    "id": 34,
+                    "type": "fallback",
+                    "snapshot": {
+                        "type": "file",
+                        "file": {"name": "notes.pdf", "token": "TOK"},
+                    },
+                    "children": [],
+                },
+                {
+                    "id": 162,
+                    "type": "fallback",
+                    "snapshot": {
+                        "type": "bookmark",
+                        "url": "https://example.com/a",
+                        "title": "示例",
+                    },
+                    "children": [],
+                },
+            ],
+        },
+    }
+    md = ftm.blocks_to_markdown(model)
+    assert "```bash\necho hi\n```" in md
+    assert "[notes.pdf](feishu-asset://file/34/)" in md
+    assert "[示例](https://example.com/a)" in md
+    assets = ftm.collect_assets(model["root"])
+    assert assets == [
+        {
+            "asset_type": "file",
+            "block_id": "34",
+            "placeholder": "feishu-asset://file/34/",
+        }
+    ]
+
+
+def test_effective_block_type_unwraps_fallback():
+    assert ftm.effective_block_type({"type": "code"}) == "code"
+    assert ftm.effective_block_type({"type": "fallback", "snapshot": {"type": "file"}}) == "file"
+    assert ftm.effective_block_type({"type": "fallback", "snapshot": {}}) == "fallback"
+
+
+def test_is_login_error():
+    assert ftm.is_login_error("需要登录。请先运行: python feishu_login.py")
+    assert ftm.is_login_error(ftm.FeishuError("需要登录"))
+    assert not ftm.is_login_error("飞书限流：页面访问人数过多")
+
+
+def test_page_needs_login():
+    class DummyPage:
+        def __init__(self, url: str, text: str = "") -> None:
+            self.url = url
+            self._text = text
+
+        def query_selector(self, _sel: str):
+            return True
+
+        def inner_text(self, _sel: str) -> str:
+            return self._text
+
+    assert ftm._page_needs_login(
+        DummyPage("https://accounts.feishu.cn/accounts/page/login")
+    )
+    assert ftm._page_needs_login(
+        DummyPage("https://waytoagi.feishu.cn/wiki/abc", "登录后即可查看")
+    )
+    assert not ftm._page_needs_login(
+        DummyPage("https://waytoagi.feishu.cn/wiki/abc", "文档正文")
+    )
+
+
+def test_interactive_feishu_login_is_invoked(monkeypatch):
+    calls = {"login": 0}
+
+    def fake_login(url: str) -> None:
+        calls["login"] += 1
+        assert "feishu.cn" in url
+
+    monkeypatch.setattr(ftm, "interactive_feishu_login", fake_login)
+    ftm.interactive_feishu_login("https://x.feishu.cn/wiki/abc")
+    assert calls["login"] == 1

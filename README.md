@@ -13,7 +13,7 @@ Works with Cursor, Codex, and other Agent Skills–compatible hosts. Copy this d
 - Cloud: `kdocs.cn` / `365.kdocs.cn` / `plus.wps.cn` share links; `feishu.cn` / `larksuite.com` wiki & docx
 - WPS intelligent docs (`.otl`): parse `open/otl` JSON; tables rendered as Markdown tables (including images in cells)
 - **WPS media** (`.mp4` / `view/media/l/`): Markdown card + cover; optional local `preview.mp4` via ffmpeg HLS remux when original download is denied
-- **Feishu**: Playwright session (`feishu_login.py`) + in-page `PageMain` block tree → Markdown + assets
+- **Feishu**: Playwright session (`feishu_login.py`) + in-page `PageMain` block tree → Markdown + assets; code fences keep language (enum mapped); file attachments and bookmarks from fallback blocks
 - **OTL images**: place by `sourceKey` / `imgID` (not array index); prefer CDN match; if incomplete, scroll + `/attachment/shapes` by `sourceKey`, with a second pass for any still-missing keys
 - Images saved as relative Markdown links (not base64)
 
@@ -56,6 +56,8 @@ Image files and **scanned/image-only PDFs** are OCR'd to recover text.
 ~/.config/doc2md/venv/bin/python scripts/doc2md.py 'https://xxx.feishu.cn/wiki/XXXX' -o /path/to/out.md
 ```
 
+If a WPS or Feishu session is missing or expired, a Chrome window opens for you to log in; conversion then continues. Pass `--no-login` to skip that prompt.
+
 ### Local file
 
 ```bash
@@ -65,7 +67,7 @@ Image files and **scanned/image-only PDFs** are OCR'd to recover text.
 ### WPS share link
 
 ```bash
-# One-time / when session expires — complete login in the Chrome window
+# Optional: log in ahead of time (conversion also opens Chrome if the session expired)
 ~/.config/doc2md/venv/bin/python scripts/wps_login.py 'https://365.kdocs.cn/l/XXXX'
 
 # Convert to Markdown
@@ -105,7 +107,7 @@ See [SKILL.md](SKILL.md) for agent-oriented workflow instructions.
 ## Notes
 
 - WPS cloud access uses unofficial web APIs and may break when WPS changes their frontend.
-- Prefer re-login via `wps_login.py`, or manually export from the WPS UI and run `convert.py`.
+- Prefer re-login via the conversion prompt (or `wps_login.py` / `feishu_login.py`), or manually export from the product UI and run `convert.py`.
 - Do not commit cookies or `~/.config/doc2md/` session files.
 
 ## License

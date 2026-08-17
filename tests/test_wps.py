@@ -188,8 +188,57 @@ def test_match_images_to_pictures_by_aspect():
 
 def test_ensure_session_missing(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(wtm, "DEFAULT_STATE", tmp_path / "nope.json")
-    with pytest.raises(wtm.WpsError):
-        wtm.ensure_session()
+    with pytest.raises(wtm.WpsError, match="Session not found"):
+        wtm.ensure_session(auto_login=False)
+
+
+def test_ensure_session_auto_login(tmp_path: Path, monkeypatch):
+    state = tmp_path / "wps_storage_state.json"
+
+    def fake_login(url: str) -> None:
+        state.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(wtm, "DEFAULT_STATE", state)
+    monkeypatch.setattr(wtm, "interactive_wps_login", fake_login)
+    assert wtm.ensure_session("https://365.kdocs.cn/l/abc") == state
+    assert state.is_file()
+
+
+def test_share_to_markdown_retries_after_expired_session(tmp_path: Path, monkeypatch):
+    calls = {"n": 0, "login": 0}
+
+    def fake_once(url, output, *, auto_login=True):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise wtm._SessionExpired()
+        return {"ok": True, "output": str(output)}
+
+    def fake_login(url: str) -> None:
+        calls["login"] += 1
+
+    monkeypatch.setattr(wtm, "_share_to_markdown_once", fake_once)
+    monkeypatch.setattr(wtm, "interactive_wps_login", fake_login)
+    result = wtm.share_to_markdown("https://365.kdocs.cn/l/abc123", tmp_path / "out.md")
+    assert result["ok"] is True
+    assert calls == {"n": 2, "login": 1}
+
+
+def test_share_to_markdown_no_login_does_not_prompt(tmp_path: Path, monkeypatch):
+    def fake_once(url, output, *, auto_login=True):
+        raise wtm._SessionExpired()
+
+    monkeypatch.setattr(wtm, "_share_to_markdown_once", fake_once)
+    monkeypatch.setattr(
+        wtm,
+        "interactive_wps_login",
+        lambda url: (_ for _ in ()).throw(AssertionError("should not login")),
+    )
+    with pytest.raises(wtm.WpsError, match="Session may be expired"):
+        wtm.share_to_markdown(
+            "https://365.kdocs.cn/l/abc123",
+            tmp_path / "out.md",
+            auto_login=False,
+        )
 
 
 def test_merge_shapes_payload_and_cover():

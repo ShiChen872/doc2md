@@ -519,15 +519,34 @@ def match_images_to_pictures(
     return ordered
 
 
-def ensure_session() -> Path:
-    if not DEFAULT_STATE.is_file():
-        raise WpsError(
-            f"Session not found: {DEFAULT_STATE}\n"
-            "Run first:\n"
-            f"  {sys.executable} {SCRIPTS / 'wps_login.py'} '<share_url>'\n"
-            "Then retry."
-        )
-    return DEFAULT_STATE
+def ensure_session(url: str | None = None, *, auto_login: bool = True) -> Path:
+    if DEFAULT_STATE.is_file():
+        return DEFAULT_STATE
+    if auto_login:
+        interactive_wps_login(url or "https://365.kdocs.cn/")
+        if DEFAULT_STATE.is_file():
+            return DEFAULT_STATE
+    raise WpsError(
+        f"Session not found: {DEFAULT_STATE}\n"
+        "Run first:\n"
+        f"  {sys.executable} {SCRIPTS / 'wps_login.py'} '<share_url>'\n"
+        "Then retry."
+    )
+
+
+def interactive_wps_login(url: str) -> None:
+    """Open headed Chrome for the user to log in; do not scrape credentials."""
+    print(
+        "WPS session missing or expired — opening Chrome. "
+        "Complete login in the window; conversion will continue.",
+        file=sys.stderr,
+    )
+    from wps_login import LoginError, run_login
+
+    try:
+        run_login(url)
+    except LoginError as e:
+        raise WpsError(str(e)) from e
 
 
 def convert_office(src: Path, md_out: Path) -> dict:
@@ -560,13 +579,37 @@ def convert_otl(otl_json: Path, md_out: Path, assets_dir: Path, source_url: str)
     )
 
 
-def share_to_markdown(url: str, output_md: Path) -> dict:
+def share_to_markdown(
+    url: str,
+    output_md: Path,
+    *,
+    auto_login: bool = True,
+    _login_retried: bool = False,
+) -> dict:
+    url = normalize_url(url)
+    try:
+        return _share_to_markdown_once(url, output_md, auto_login=auto_login)
+    except _SessionExpired:
+        if auto_login and not _login_retried:
+            interactive_wps_login(url)
+            return share_to_markdown(
+                url, output_md, auto_login=auto_login, _login_retried=True
+            )
+        raise WpsError(
+            "Failed to load share meta. Session may be expired — re-run wps_login.py."
+        )
+
+
+class _SessionExpired(WpsError):
+    """Internal: share meta failed; wrapper may prompt login and retry once."""
+
+
+def _share_to_markdown_once(url: str, output_md: Path, *, auto_login: bool = True) -> dict:
     from playwright.sync_api import sync_playwright
     from otl_to_md import convert_file
 
-    url = normalize_url(url)
     sid = extract_share_id(url)
-    state = ensure_session()
+    state = ensure_session(url, auto_login=auto_login)
     output_md = output_md.expanduser().resolve()
     output_md.parent.mkdir(parents=True, exist_ok=True)
     work = output_md.parent / f".doc2md_work_{sid}"
@@ -609,9 +652,7 @@ def share_to_markdown(url: str, output_md: Path) -> dict:
                     continue
         if not meta:
             browser.close()
-            raise WpsError(
-                "Failed to load share meta. Session may be expired — re-run wps_login.py."
-            )
+            raise _SessionExpired()
 
         fi = meta.get("fileinfo") or {}
         file_id = str(fi.get("id") or "")
@@ -983,13 +1024,18 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Convert WPS/kdocs share link to Markdown.")
     parser.add_argument("url", help="Share URL (kdocs.cn / 365.kdocs.cn)")
     parser.add_argument("-o", "--output", type=Path, required=True, help="Output .md path")
+    parser.add_argument(
+        "--no-login",
+        action="store_true",
+        help="Do not open Chrome if the WPS session is missing or expired",
+    )
     args = parser.parse_args(argv)
 
     # Allow importing sibling modules
     sys.path.insert(0, str(SCRIPTS))
 
     try:
-        result = share_to_markdown(args.url, args.output)
+        result = share_to_markdown(args.url, args.output, auto_login=not args.no_login)
     except WpsError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 1

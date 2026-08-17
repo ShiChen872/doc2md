@@ -116,14 +116,15 @@ def run_convert(raw: str, output: Path, *, assets_dir: Path | None = None) -> in
     return 0
 
 
-def run_wps(raw: str, output: Path) -> int:
+def run_wps(raw: str, output: Path, *, auto_login: bool = True) -> int:
     from wps_to_md import WpsError, normalize_url, share_to_markdown
 
     try:
-        result = share_to_markdown(normalize_url(raw), output)
+        result = share_to_markdown(normalize_url(raw), output, auto_login=auto_login)
     except WpsError as e:
         print(f"ERROR: {e}", file=sys.stderr)
-        print("Hint: re-run wps_login.py if the WPS session expired.", file=sys.stderr)
+        if not auto_login:
+            print("Hint: re-run wps_login.py if the WPS session expired.", file=sys.stderr)
         return 1
     print("OK")
     print("route: wps")
@@ -137,6 +138,7 @@ def run_feishu(
     *,
     headed: bool = False,
     timeout_ms: int = 60000,
+    auto_login: bool = True,
 ) -> int:
     from feishu_to_md import FeishuError, normalize_url, share_to_markdown
 
@@ -146,10 +148,12 @@ def run_feishu(
             output,
             headless=not headed,
             timeout_ms=timeout_ms,
+            auto_login=auto_login,
         )
     except FeishuError as e:
         print(f"ERROR: {e}", file=sys.stderr)
-        print("Hint: re-run feishu_login.py if the Feishu session expired.", file=sys.stderr)
+        if not auto_login:
+            print("Hint: re-run feishu_login.py if the Feishu session expired.", file=sys.stderr)
         return 1
     print("OK")
     print("route: feishu")
@@ -171,6 +175,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--headed", action="store_true", help="Show browser (Feishu)")
     parser.add_argument("--timeout-ms", type=int, default=60000, help="Feishu page timeout")
+    parser.add_argument(
+        "--no-login",
+        action="store_true",
+        help="Do not open Chrome if a WPS/Feishu session is missing or expired",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -187,12 +196,13 @@ def main(argv: list[str] | None = None) -> int:
             assets = args.assets_dir.expanduser().resolve() if args.assets_dir else None
             return run_convert(args.input, output, assets_dir=assets)
         if kind == "wps":
-            return run_wps(args.input, output)
+            return run_wps(args.input, output, auto_login=not args.no_login)
         return run_feishu(
             args.input,
             output,
             headed=args.headed,
             timeout_ms=args.timeout_ms,
+            auto_login=not args.no_login,
         )
     except Exception as e:
         print(f"ERROR: {e}", file=sys.stderr)

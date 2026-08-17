@@ -24,6 +24,10 @@ DEFAULT_COOKIE = CFG / "wps_cookie.txt"
 DEFAULT_URL = "https://365.kdocs.cn/"
 
 
+class LoginError(Exception):
+    """Interactive login failed or timed out."""
+
+
 def run_login(url: str, timeout_sec: int = 300) -> None:
     from playwright.sync_api import sync_playwright
 
@@ -79,7 +83,7 @@ def run_login(url: str, timeout_sec: int = 300) -> None:
 
         browser.close()
         if not ok:
-            raise SystemExit(
+            raise LoginError(
                 f"TIMEOUT: {timeout_sec}s 内未检测到完整登录。"
                 "请重试并完成企业账号登录。"
             )

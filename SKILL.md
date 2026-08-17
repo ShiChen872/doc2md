@@ -27,8 +27,7 @@ Replace `<this-skill>` with the absolute path of this skill directory
 ## Workflow
 
 1. **Prefer the unified CLI** `doc2md.py` — it classifies local path vs WPS vs Feishu.
-2. If WPS session missing/expired → run `wps_login.py` first (opens Chrome for the user to log in).
-   If Feishu session missing/expired → run `feishu_login.py` first.
+2. If a WPS/Feishu session is missing or expired, conversion **opens Chrome** for the user to log in, then continues. Pass `--no-login` to skip (CI / non-interactive).
 3. After conversion, report image counts and confirm `*_assets/` beside the `.md`.
 
 ### Recommended (any input)
@@ -50,7 +49,7 @@ Also accepts `.otl.json` (WPS intelligent-doc JSON).
 ### WPS share link
 
 ```bash
-# First time / cookie expired — user completes login in Chrome
+# Optional: log in ahead of time (wps_to_md also opens Chrome if the session expired)
 ~/.config/doc2md/venv/bin/python <this-skill>/scripts/wps_login.py 'https://365.kdocs.cn/l/XXXX'
 
 # Convert share link → Markdown (+ assets)
@@ -70,7 +69,7 @@ Session files (platform-agnostic):
 ### Feishu / Lark share link
 
 ```bash
-# First time / cookie expired — user completes login in Chrome
+# Optional: log in ahead of time (feishu_to_md also opens Chrome if needed)
 ~/.config/doc2md/venv/bin/python <this-skill>/scripts/feishu_login.py 'https://xxx.feishu.cn/wiki/XXXX'
 
 # Convert wiki/docx URL → Markdown (+ assets)
@@ -104,10 +103,10 @@ Session: `~/.config/doc2md/feishu_storage_state.json` (and `feishu_cookie.txt` b
 
 ## Failure fallback (WPS / Feishu)
 
-1. Re-run `wps_login.py` / `feishu_login.py` if session expired.
+1. Conversion opens headed Chrome when the session is missing/expired; user logs in themselves. Use `--no-login` plus `wps_login.py` / `feishu_login.py` if you need to log in separately.
 2. If still failing (password-protected link, rate limit, unsupported type): ask user to export/download in the product UI, then `convert.py` on the local file.
 3. Do not invent credentials or scrape login forms — only open a browser for the user to log in themselves.
-4. Feishu: complex blocks (bitable / sheet / mindnote) are skipped with an HTML comment placeholder; legacy `/docs/` may need upgrade to new docx.
+4. Feishu: code fences keep language (numeric CodeLanguage mapped); file attachments download when present; bitable / sheet / mindnote are skipped with an HTML comment; legacy `/docs/` may need upgrade to new docx.
 
 ## Portability
 

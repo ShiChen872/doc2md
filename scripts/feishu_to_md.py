@@ -44,6 +44,86 @@ PATH_RE = re.compile(
 # Trailing slash prevents naive replace of id "7" from mangling "73" / "76".
 ASSET_PLACEHOLDER = "feishu-asset://{kind}/{block_id}/"
 
+# Feishu Open API CodeLanguage enum → Markdown fence tag.
+# https://open.feishu.cn/document/ukTMukTMukTM/uUDN04SN0QjL1QDN/document-docx/docx-v1/data-structure/block
+CODE_LANGUAGE_ENUM: dict[int, str] = {
+    1: "",  # PlainText
+    2: "abap",
+    3: "ada",
+    4: "apache",
+    5: "apex",
+    6: "asm",
+    7: "bash",
+    8: "csharp",
+    9: "cpp",
+    10: "c",
+    11: "cobol",
+    12: "css",
+    13: "coffeescript",
+    14: "d",
+    15: "dart",
+    16: "delphi",
+    17: "django",
+    18: "dockerfile",
+    19: "erlang",
+    20: "fortran",
+    21: "foxpro",
+    22: "go",
+    23: "groovy",
+    24: "html",
+    25: "handlebars",
+    26: "http",
+    27: "haskell",
+    28: "json",
+    29: "java",
+    30: "javascript",
+    31: "julia",
+    32: "kotlin",
+    33: "latex",
+    34: "lisp",
+    35: "logo",
+    36: "lua",
+    37: "matlab",
+    38: "makefile",
+    39: "markdown",
+    40: "nginx",
+    41: "objectivec",
+    42: "abl",
+    43: "php",
+    44: "perl",
+    45: "postscript",
+    46: "powershell",
+    47: "prolog",
+    48: "protobuf",
+    49: "python",
+    50: "r",
+    51: "rpg",
+    52: "ruby",
+    53: "rust",
+    54: "sas",
+    55: "scss",
+    56: "sql",
+    57: "scala",
+    58: "scheme",
+    59: "scratch",
+    60: "shell",
+    61: "swift",
+    62: "thrift",
+    63: "typescript",
+    64: "vbscript",
+    65: "vb",
+    66: "xml",
+    67: "yaml",
+    68: "cmake",
+    69: "diff",
+    70: "gherkin",
+    71: "graphql",
+    72: "glsl",
+    73: "properties",
+    74: "solidity",
+    75: "toml",
+}
+
 SERIALIZE_BLOCK_TREE_JS = """
 () => {
   const trimCaption = (caption) => {
@@ -68,11 +148,20 @@ SERIALIZE_BLOCK_TREE_JS = """
     }));
   };
 
+  const effectiveTypeOf = (block) => {
+    const snapshotType = block?.snapshot?.type || '';
+    if (block?.type === 'fallback') {
+      return snapshotType || 'fallback';
+    }
+    return block?.type || snapshotType || '';
+  };
+
   const simplifySnapshot = (block) => {
     const snapshot = block?.snapshot ?? {};
-    const base = { type: snapshot.type ?? block?.type ?? '' };
+    const effectiveType = effectiveTypeOf(block);
+    const base = { type: effectiveType };
 
-    switch (block?.type) {
+    switch (effectiveType) {
       case 'ordered':
         return { ...base, seq: snapshot.seq ?? '' };
       case 'todo':
@@ -80,7 +169,7 @@ SERIALIZE_BLOCK_TREE_JS = """
       case 'code':
         return {
           ...base,
-          language: snapshot.language ?? snapshot.lang ?? '',
+          language: snapshot.language ?? snapshot.lang ?? snapshot.style?.language ?? '',
         };
       case 'table':
         return {
@@ -132,6 +221,12 @@ SERIALIZE_BLOCK_TREE_JS = """
           block_type_id: snapshot.block_type_id ?? '',
           data: safeJson(snapshot.data),
         };
+      case 'bookmark':
+        return {
+          ...base,
+          url: snapshot.url ?? snapshot.bookmark?.url ?? snapshot.link ?? '',
+          title: snapshot.title ?? snapshot.bookmark?.title ?? '',
+        };
       default:
         return base;
     }
@@ -148,7 +243,7 @@ SERIALIZE_BLOCK_TREE_JS = """
 
     return {
       id: block.id ?? null,
-      type: block.type ?? block?.snapshot?.type ?? '',
+      type: effectiveTypeOf(block),
       record_id: block?.record?.id ?? '',
       zone_state: block?.zoneState
         ? {
@@ -184,16 +279,26 @@ WAIT_PAGE_READY_JS = """
   if (!window.PageMain?.blockManager?.rootBlockModel) {
     return false;
   }
-  const root = window.PageMain.blockManager.rootBlockModel;
-  const children = Array.isArray(root.children) ? root.children : [];
-  return children.every((block) => {
+  const hydratingTypes = new Set(['whiteboard', 'code', 'file']);
+  const isBlockReady = (block) => {
+    if (!block) {
+      return true;
+    }
     const snapshotType = block?.snapshot?.type;
     const blockType = block?.type;
     const ready = snapshotType !== 'pending';
     const syncedReady = blockType !== 'synced_reference' || block?.isAllDataReady;
-    const whiteboardReady = blockType !== 'fallback' || snapshotType !== 'whiteboard';
-    return ready && syncedReady && whiteboardReady;
-  });
+    const hydratingFallback = blockType === 'fallback' && hydratingTypes.has(snapshotType);
+    if (!ready || !syncedReady || hydratingFallback) {
+      return false;
+    }
+    const children = Array.isArray(block.children) ? block.children : [];
+    const synced = Array.isArray(block?.innerBlockManager?.rootBlockModel?.children)
+      ? block.innerBlockManager.rootBlockModel.children
+      : [];
+    return children.every(isBlockReady) && synced.every(isBlockReady);
+  };
+  return isBlockReady(window.PageMain.blockManager.rootBlockModel);
 }
 """
 
@@ -380,6 +485,25 @@ class FeishuError(Exception):
     pass
 
 
+def is_login_error(exc: BaseException | str) -> bool:
+    return "需要登录" in str(exc)
+
+
+def interactive_feishu_login(url: str) -> None:
+    """Open headed Chrome for the user to log in; do not scrape credentials."""
+    print(
+        "Feishu session missing or expired — opening Chrome. "
+        "Complete login in the window; conversion will continue.",
+        file=sys.stderr,
+    )
+    from feishu_login import LoginError, run_login
+
+    try:
+        run_login(url)
+    except LoginError as e:
+        raise FeishuError(str(e)) from e
+
+
 def normalize_url(url: str) -> str:
     url = (url or "").strip()
     if not url.startswith("http"):
@@ -429,6 +553,56 @@ def _clean_text(text: str, keep_newline: bool = False) -> str:
     if keep_newline:
         return text.rstrip()
     return text.replace("\r", "").replace("\n", " ").strip()
+
+
+def effective_block_type(block: dict[str, Any]) -> str:
+    """Use snapshot.type when PageMain still exposes the block as fallback."""
+    t = str(block.get("type") or "")
+    if t == "fallback":
+        snap = block.get("snapshot") or {}
+        return str(snap.get("type") or "fallback")
+    return t
+
+
+def resolve_code_language(raw: Any) -> str:
+    """Map Feishu CodeLanguage enum / name to a Markdown fence tag."""
+    if raw is None or isinstance(raw, bool):
+        return ""
+    if isinstance(raw, int):
+        return CODE_LANGUAGE_ENUM.get(raw, "")
+    if isinstance(raw, float) and raw.is_integer():
+        return CODE_LANGUAGE_ENUM.get(int(raw), "")
+    text = str(raw).strip()
+    if not text:
+        return ""
+    if text.isdigit():
+        return CODE_LANGUAGE_ENUM.get(int(text), "")
+    lowered = text.lower().replace("c++", "cpp").replace("c#", "csharp")
+    compact = re.sub(r"[\s_-]+", "", lowered)
+    aliases = {
+        "plaintext": "",
+        "js": "javascript",
+        "ts": "typescript",
+        "py": "python",
+        "sh": "bash",
+        "shell": "shell",
+        "objective": "objectivec",
+        "objectivec": "objectivec",
+        "htmlbars": "handlebars",
+        "handlebars": "handlebars",
+        "openglshadinglanguage": "glsl",
+        "glsl": "glsl",
+        "openedgeabl": "abl",
+        "visual": "vb",
+        "visualbasic": "vb",
+    }
+    if compact in aliases:
+        return aliases[compact]
+    if compact in {tag for tag in CODE_LANGUAGE_ENUM.values() if tag}:
+        return compact
+    if re.fullmatch(r"[A-Za-z][\w+#.-]*", lowered):
+        return lowered
+    return ""
 
 
 def _escape_markdown(text: str) -> str:
@@ -505,7 +679,7 @@ def _render_inline_ops(block: dict[str, Any]) -> str:
 
 
 def _asset_placeholder(block: dict[str, Any]) -> str:
-    kind = block.get("type") or "asset"
+    kind = effective_block_type(block) or "asset"
     bid = block.get("id") or "unknown"
     return ASSET_PLACEHOLDER.format(kind=kind, block_id=bid)
 
@@ -563,7 +737,7 @@ def render_iframe_markdown(
 
 
 def _render_asset_block(block: dict[str, Any], indent: int = 0) -> str:
-    block_type = block.get("type") or ""
+    block_type = effective_block_type(block)
     url = _asset_placeholder(block)
     if block_type == "file":
         name = _clean_text(((block.get("snapshot") or {}).get("file") or {}).get("name") or "附件")
@@ -586,7 +760,7 @@ def _table_line(cells: list[str], indent: int = 0) -> str:
 
 
 def _extract_plain_text(block: dict[str, Any]) -> str:
-    block_type = block.get("type") or ""
+    block_type = effective_block_type(block)
     text_types = {
         "text",
         "heading1",
@@ -645,7 +819,7 @@ def _render_table(block: dict[str, Any], indent: int = 0) -> str:
 
 
 def _render_list_item(block: dict[str, Any], indent: int = 0) -> str:
-    block_type = block.get("type") or ""
+    block_type = effective_block_type(block)
     content = _render_inline_ops(block)
     marker = "- "
     if block_type == "ordered":
@@ -676,7 +850,7 @@ def _render_isv(block: dict[str, Any], indent: int = 0) -> str:
 
 
 def _render_block(block: dict[str, Any], indent: int = 0) -> str:
-    block_type = block.get("type") or ""
+    block_type = effective_block_type(block)
 
     if block_type == "divider":
         return " " * indent + "---"
@@ -692,11 +866,10 @@ def _render_block(block: dict[str, Any], indent: int = 0) -> str:
         return (" " * indent + content) if content else ""
 
     if block_type == "code":
-        language = _clean_text(str((block.get("snapshot") or {}).get("language") or ""))
-        # language may be a numeric enum; keep empty if not a word
-        if language.isdigit():
-            language = ""
+        language = resolve_code_language((block.get("snapshot") or {}).get("language"))
         code = _clean_text(_zone_all_text(block), keep_newline=True)
+        if not code:
+            code = _clean_text(_render_inline_ops(block), keep_newline=True)
         if not code:
             return ""
         return f"{' ' * indent}```{language}\n{code}\n{' ' * indent}```"
@@ -738,6 +911,14 @@ def _render_block(block: dict[str, Any], indent: int = 0) -> str:
             height_i = None
         return render_iframe_markdown(url, height=height_i, indent=indent)
 
+    if block_type == "bookmark":
+        snapshot = block.get("snapshot") or {}
+        url = str(snapshot.get("url") or "").strip()
+        title = _clean_text(snapshot.get("title") or "") or url or "书签"
+        if url:
+            return f"{' ' * indent}[{title}]({url})"
+        return f"{' ' * indent}<!-- skipped feishu block: bookmark -->"
+
     if block_type == "isv":
         return _render_isv(block, indent)
 
@@ -771,10 +952,10 @@ def _render_blocks(blocks: list[dict[str, Any]], indent: int = 0) -> str:
     index = 0
     while index < len(blocks):
         block = blocks[index]
-        block_type = block.get("type")
+        block_type = effective_block_type(block)
         if block_type in list_types:
             lines: list[str] = []
-            while index < len(blocks) and blocks[index].get("type") in list_types:
+            while index < len(blocks) and effective_block_type(blocks[index]) in list_types:
                 rendered = _render_list_item(blocks[index], indent)
                 if rendered:
                     lines.append(rendered)
@@ -814,7 +995,7 @@ def blocks_to_markdown(
 
 def collect_assets(block: dict[str, Any]) -> list[dict[str, str]]:
     assets: list[dict[str, str]] = []
-    block_type = block.get("type") or ""
+    block_type = effective_block_type(block)
     block_id = block.get("id")
     if block_type in {"image", "file", "whiteboard", "diagram"} and block_id is not None:
         assets.append(
@@ -958,6 +1139,8 @@ def share_to_markdown(
     headless: bool = True,
     timeout_ms: int = 60000,
     retries: int = 3,
+    auto_login: bool = True,
+    _login_retried: bool = False,
 ) -> dict[str, Any]:
     from playwright.sync_api import sync_playwright
 
@@ -971,6 +1154,7 @@ def share_to_markdown(
         )
 
     last_err: Exception | None = None
+    relogin = False
     with sync_playwright() as p:
         browser = p.chromium.launch(channel="chrome", headless=headless)
         context_kwargs: dict[str, Any] = {"ignore_https_errors": True}
@@ -993,10 +1177,12 @@ def share_to_markdown(
                     last_err = FeishuError("飞书限流：页面访问人数过多，请稍后重试")
                     continue
                 if _page_needs_login(page):
-                    raise FeishuError(
+                    last_err = FeishuError(
                         f"需要登录。请先运行: "
                         f"python {Path(__file__).name.replace('feishu_to_md.py', 'feishu_login.py')} '{url}'"
                     )
+                    relogin = auto_login and not _login_retried
+                    break
 
                 model = extract_model_from_page(page, timeout_ms=timeout_ms)
                 title = _clean_text(model.get("title") or "") or info["token"]
@@ -1038,7 +1224,8 @@ def share_to_markdown(
                 return result
             except FeishuError as e:
                 last_err = e
-                if "需要登录" in str(e) or "旧版" in str(e):
+                if is_login_error(e) or "旧版" in str(e):
+                    relogin = auto_login and not _login_retried and is_login_error(e)
                     break
                 print(f"WARN attempt {attempt}: {e}", file=sys.stderr)
                 time.sleep(2 * attempt)
@@ -1048,7 +1235,20 @@ def share_to_markdown(
                 time.sleep(2 * attempt)
 
         browser.close()
-        raise FeishuError(str(last_err) if last_err else "conversion failed")
+
+    if relogin:
+        interactive_feishu_login(url)
+        return share_to_markdown(
+            url,
+            output_md,
+            storage_state=storage_state,
+            headless=headless,
+            timeout_ms=timeout_ms,
+            retries=retries,
+            auto_login=auto_login,
+            _login_retried=True,
+        )
+    raise FeishuError(str(last_err) if last_err else "conversion failed")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1063,6 +1263,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--headed", action="store_true", help="Show browser window")
     parser.add_argument("--timeout-ms", type=int, default=60000)
+    parser.add_argument(
+        "--no-login",
+        action="store_true",
+        help="Do not open Chrome if the Feishu session is missing or expired",
+    )
     args = parser.parse_args(argv)
 
     url = normalize_url(args.url)
@@ -1083,6 +1288,7 @@ def main(argv: list[str] | None = None) -> int:
             storage_state=args.storage_state,
             headless=not args.headed,
             timeout_ms=args.timeout_ms,
+            auto_login=not args.no_login,
         )
     except FeishuError as e:
         print(f"ERROR: {e}", file=sys.stderr)

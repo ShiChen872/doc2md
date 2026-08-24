@@ -36,6 +36,40 @@ def test_is_media_filename():
     assert not wtm.is_media_filename("notes.docx")
 
 
+def test_is_pdf_share():
+    assert wtm.is_pdf_share("竞对策略.pdf")
+    assert wtm.is_pdf_share("x.PDF")
+    assert wtm.is_pdf_share("noext", office_type="f")
+    assert wtm.is_pdf_share("noext", ftype="pdf")
+    assert not wtm.is_pdf_share("notes.docx")
+    assert not wtm.is_pdf_share("notes.otl", office_type="s")
+
+
+def test_parse_pdf_page_label():
+    assert wtm.parse_pdf_page_label("3/24") == (3, 24)
+    assert wtm.parse_pdf_page_label(" 3 / 24 ") == (3, 24)
+    assert wtm.parse_pdf_page_label("1\n/\n8") == (1, 8)
+    assert wtm.parse_pdf_page_label("1") == (None, None)
+    assert wtm.parse_pdf_page_label("") == (None, None)
+    assert wtm.parse_pdf_page_label("1/9999") == (None, None)
+
+
+def test_build_pdf_preview_markdown():
+    md = wtm.build_pdf_preview_markdown(
+        title="竞对策略",
+        source_url="https://365.kdocs.cn/l/abc",
+        pages=[
+            ("竞对策略_assets/page_001.png", "封面文字"),
+            ("竞对策略_assets/page_002.png", ""),
+        ],
+    )
+    assert "# 竞对策略" in md
+    assert "网页预览分页截图" in md
+    assert "![](竞对策略_assets/page_001.png)" in md
+    assert "封面文字" in md
+    assert "## 第 2 页" in md
+
+
 def test_build_media_markdown_includes_cover_and_stream():
     md = wtm.build_media_markdown(
         title="演示",

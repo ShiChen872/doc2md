@@ -13,6 +13,7 @@ Works with Cursor, Codex, and other Agent Skills–compatible hosts. Copy this d
 - Cloud: `kdocs.cn` / `365.kdocs.cn` / `plus.wps.cn` share links; `feishu.cn` / `larksuite.com` wiki & docx
 - WPS intelligent docs (`.otl`): parse `open/otl` JSON; tables rendered as Markdown tables (including images in cells)
 - **WPS media** (`.mp4` / `view/media/l/`): Markdown card + cover; optional local `preview.mp4` via ffmpeg HLS remux when original download is denied
+- **WPS PDF shares**: if original download is denied, screenshot web-viewer pages (`page_NNN.png`) + OCR
 - **Feishu**: Playwright session (`feishu_login.py`) + in-page `PageMain` block tree → Markdown + assets; code fences keep language (enum mapped); file attachments and bookmarks from fallback blocks
 - **OTL images**: place by `sourceKey` / `imgID` (not array index); prefer CDN match; if incomplete, scroll + `/attachment/shapes` by `sourceKey`, with a second pass for any still-missing keys
 - Images saved as relative Markdown links (not base64)
@@ -57,6 +58,8 @@ Image files and **scanned/image-only PDFs** are OCR'd to recover text.
 ```
 
 If a WPS or Feishu session is missing or expired, a Chrome window opens for you to log in; conversion then continues. Pass `--no-login` to skip that prompt.
+
+Agents (Cursor / Codex / Comate) should run `doc2md.py` only. Do not call WPS official APIs, replay `WPS_SID`, or drive Chrome with AppleScript.
 
 ### Local file
 

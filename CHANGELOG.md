@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.4.5
+
+- WPS PDF shares: when original download is denied, screenshot web-viewer `.pdf-page` tiles + OCR (same idea as media HLS preview)
+- SKILL: convert only via `doc2md.py`; do not use host WPS APIs, `WPS_SID`, or Chrome AppleScript / “JavaScript from Apple Events”
+
 ## v0.4.4
 
 - Feishu code blocks: map CodeLanguage enum (e.g. 49 → `python`) instead of dropping numeric languages

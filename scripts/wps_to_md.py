@@ -11,13 +11,15 @@ Flow:
   1. Open share URL with saved session
   2. Resolve file meta via drive links API
   3. Try binary download (Office files)
-  4. If blocked / .otl intelligent doc: capture open/otl JSON + CDN images → Markdown
-  5. Otherwise run convert.py on the downloaded Office file
+  4. If blocked PDF: screenshot web-viewer `.pdf-page` tiles + OCR → Markdown
+  5. If blocked / .otl intelligent doc: capture open/otl JSON + CDN images → Markdown
+  6. Otherwise run convert.py on the downloaded Office file
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import shutil
@@ -46,6 +48,10 @@ MEDIA_EXTS = {
     ".mpeg",
     ".mpg",
 }
+PDF_PAGE_SEL = ".pdf-page"
+PDF_PAGE_INPUT_SEL = "input.kd-input-inner-align-center"
+PDF_PAGE_LABEL_RE = re.compile(r"(\d+)\s*/\s*(\d+)")
+MAX_PDF_PREVIEW_PAGES = 200
 
 
 class WpsError(Exception):
@@ -61,6 +67,31 @@ def extract_share_id(url: str) -> str:
 
 def is_media_filename(fname: str) -> bool:
     return Path(fname or "").suffix.lower() in MEDIA_EXTS
+
+
+def is_pdf_share(fname: str = "", office_type: str = "", ftype: str = "") -> bool:
+    """True when share meta / viewer looks like a PDF (not an OTL / Office binary)."""
+    if Path(fname or "").suffix.lower() == ".pdf":
+        return True
+    ot = str(office_type or "").lower()
+    ft = str(ftype or "").lower()
+    if ot in {"f", "pdf"} or ft in {"f", "pdf"}:
+        return True
+    return False
+
+
+def parse_pdf_page_label(text: str) -> tuple[int | None, int | None]:
+    """Parse a viewer label like '3/24' or '3 / 24' into (current, total)."""
+    if not text:
+        return None, None
+    compact = re.sub(r"\s+", "", str(text))
+    m = PDF_PAGE_LABEL_RE.search(compact)
+    if not m:
+        return None, None
+    cur, total = int(m.group(1)), int(m.group(2))
+    if cur < 1 or total < 1 or total > MAX_PDF_PREVIEW_PAGES:
+        return None, None
+    return cur, total
 
 
 def format_bytes(n: int | float | None) -> str:
@@ -226,6 +257,32 @@ def build_media_markdown(
             "(preview stream / cover may still be available) -->"
         )
         lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def build_pdf_preview_markdown(
+    *,
+    title: str,
+    source_url: str,
+    pages: list[tuple[str, str]],
+) -> str:
+    """Markdown for a WPS PDF share captured from the web viewer (page PNG + OCR)."""
+    lines = [
+        f"> 来源: {source_url}",
+        "> 类型: WPS PDF 分享（网页预览分页截图 + OCR）",
+        "",
+        f"# {title}",
+        "",
+    ]
+    for i, (rel, ocr) in enumerate(pages, 1):
+        lines.append(f"## 第 {i} 页")
+        lines.append("")
+        lines.append(f"![]({rel})")
+        lines.append("")
+        text = (ocr or "").strip()
+        if text:
+            lines.append(text)
+            lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -568,6 +625,150 @@ def convert_office(src: Path, md_out: Path) -> dict:
     return stats
 
 
+def read_pdf_viewer_label(page) -> str:
+    """Read the WPS PDF toolbar page label (input value + nearby text)."""
+    try:
+        info = page.evaluate(
+            """() => {
+              const inp = document.querySelector('input.kd-input-inner-align-center');
+              const val = (inp && inp.value) || '';
+              const nearby = inp && inp.parentElement
+                ? (inp.parentElement.innerText || '')
+                : '';
+              return {val, nearby};
+            }"""
+        )
+    except Exception:
+        return ""
+    if not isinstance(info, dict):
+        return ""
+    return f"{info.get('val') or ''} {info.get('nearby') or ''}"
+
+
+def goto_pdf_preview_page(page, n: int) -> None:
+    loc = page.locator(PDF_PAGE_INPUT_SEL).first
+    if loc.count() == 0:
+        return
+    loc.click(timeout=5000)
+    loc.fill(str(n), timeout=5000)
+    loc.press("Enter")
+    page.wait_for_timeout(800)
+
+
+def screenshot_visible_pdf_page(page, dest: Path) -> bool:
+    """Screenshot the `.pdf-page` closest to the viewport center."""
+    try:
+        idx = page.evaluate(
+            """() => {
+              const pages = [...document.querySelectorAll('.pdf-page')];
+              if (!pages.length) return -1;
+              const mid = window.innerHeight / 2;
+              let best = 0, bestDist = 1e9;
+              pages.forEach((el, i) => {
+                const r = el.getBoundingClientRect();
+                const c = r.top + r.height / 2;
+                const d = Math.abs(c - mid);
+                if (d < bestDist) { bestDist = d; best = i; }
+              });
+              pages[best]?.scrollIntoView({block: 'center'});
+              return best;
+            }"""
+        )
+    except Exception:
+        return False
+    if not isinstance(idx, int) or idx < 0:
+        return False
+    page.wait_for_timeout(350)
+    loc = page.locator(PDF_PAGE_SEL).nth(idx)
+    try:
+        loc.wait_for(state="visible", timeout=8000)
+        loc.screenshot(path=str(dest))
+    except Exception:
+        return False
+    return dest.is_file() and dest.stat().st_size > 500
+
+
+def capture_pdf_preview_pages(page, assets_dir: Path) -> list[Path]:
+    """Capture each PDF viewer page as PNG. Empty list if the viewer did not load."""
+    try:
+        page.wait_for_selector(PDF_PAGE_SEL, timeout=25000)
+    except Exception:
+        return []
+    page.wait_for_timeout(800)
+    try:
+        page.set_viewport_size({"width": 1600, "height": 1000})
+    except Exception:
+        pass
+
+    _, total = parse_pdf_page_label(read_pdf_viewer_label(page))
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    for old in assets_dir.glob("page_*.png"):
+        old.unlink()
+
+    saved: list[Path] = []
+    seen: set[str] = set()
+    limit = total or MAX_PDF_PREVIEW_PAGES
+    consecutive_dupes = 0
+    for n in range(1, limit + 1):
+        if n > 1 or total:
+            goto_pdf_preview_page(page, n)
+            if n > 1 and not total and page.locator(PDF_PAGE_INPUT_SEL).count() == 0:
+                try:
+                    page.mouse.wheel(0, 900)
+                    page.wait_for_timeout(500)
+                except Exception:
+                    pass
+        dest = assets_dir / f"page_{n:03d}.png"
+        if not screenshot_visible_pdf_page(page, dest):
+            break
+        digest = hashlib.sha256(dest.read_bytes()).hexdigest()
+        if digest in seen:
+            dest.unlink(missing_ok=True)
+            consecutive_dupes += 1
+            if total:
+                continue
+            if consecutive_dupes >= 2:
+                break
+            continue
+        consecutive_dupes = 0
+        seen.add(digest)
+        saved.append(dest)
+        if not total:
+            _, discovered = parse_pdf_page_label(read_pdf_viewer_label(page))
+            if discovered:
+                total = discovered
+                limit = discovered
+    return saved
+
+
+def write_pdf_preview_markdown(
+    *,
+    title: str,
+    source_url: str,
+    output_md: Path,
+    page_files: list[Path],
+) -> dict:
+    from convert import ocr_image_text
+
+    assets_dir = page_files[0].parent if page_files else output_md.parent
+    pages: list[tuple[str, str]] = []
+    engines: set[str] = set()
+    for img in page_files:
+        rel = f"{assets_dir.name}/{img.name}"
+        ocr, engine = ocr_image_text(img)
+        engines.add(engine)
+        pages.append((rel, ocr))
+    md = build_pdf_preview_markdown(title=title, source_url=source_url, pages=pages)
+    output_md.parent.mkdir(parents=True, exist_ok=True)
+    output_md.write_text(md, encoding="utf-8")
+    return {
+        "pages": len(page_files),
+        "ocr_engines": sorted(engines),
+        "markdown_chars": len(md),
+        "assets_dir": str(assets_dir),
+    }
+
+
 def convert_otl(otl_json: Path, md_out: Path, assets_dir: Path, source_url: str) -> dict:
     from otl_to_md import convert_file
 
@@ -670,6 +871,7 @@ def _share_to_markdown_once(url: str, output_md: Path, *, auto_login: bool = Tru
 
         is_otl = fname.lower().endswith(".otl") or ftype.lower() in {"otl", "o", "outline"}
         is_media = is_media_filename(fname) or "/view/media/" in url.lower()
+        is_pdf = is_pdf_share(fname, ftype=ftype)
 
         # --- media / video share: Markdown card + cover (no Office body) ---
         if is_media and file_id and group_id:
@@ -884,7 +1086,7 @@ def _share_to_markdown_once(url: str, output_md: Path, *, auto_login: bool = Tru
             result["convert"] = stats
             return result
 
-        # --- OTL / online-only path ---
+        # --- PDF web viewer (download denied) / OTL / online-only ---
         otl_bytes: dict[str, bytes | None] = {"data": None}
         images: list[tuple[str, str, bytes]] = []
         shapes_map: dict[str, dict] = {}
@@ -942,8 +1144,48 @@ def _share_to_markdown_once(url: str, output_md: Path, *, auto_login: bool = Tru
                 fobj = ((env.get("file_info") or {}).get("file")) or {}
                 if fobj.get("name") and not fname:
                     fname = str(fobj["name"])
+                if not is_pdf:
+                    is_pdf = is_pdf_share(
+                        fname,
+                        office_type=str(env.get("office_type") or ""),
+                        ftype=ftype,
+                    )
         except Exception:
             pass
+
+        # PDF shares often deny original download; capture the web viewer pages.
+        pdf_ready = False
+        if is_pdf or page.locator(PDF_PAGE_SEL).count() > 0:
+            try:
+                page.wait_for_selector(PDF_PAGE_SEL, timeout=15000)
+                pdf_ready = True
+            except Exception:
+                pdf_ready = False
+        if pdf_ready:
+            stem = safe_stem(Path(fname).stem if fname else sid)
+            if output_md.name in {"out.md", "output.md"} or output_md.stem == "wps_out":
+                output_md = output_md.with_name(f"{stem}.md")
+                result["output"] = str(output_md)
+            assets_dir = output_md.parent / f"{output_md.stem}_assets"
+            page_files = capture_pdf_preview_pages(page, assets_dir)
+            browser.close()
+            if not page_files:
+                raise WpsError(
+                    "Could not capture PDF preview pages. "
+                    "Re-run wps_login.py, or export the file from the WPS UI and run convert.py."
+                )
+            stats = write_pdf_preview_markdown(
+                title=Path(fname).stem or stem,
+                source_url=url,
+                output_md=output_md,
+                page_files=page_files,
+            )
+            result["mode"] = "pdf-preview"
+            result["convert"] = stats
+            result["pages"] = stats.get("pages")
+            result["assets_dir"] = stats.get("assets_dir")
+            result["markdown_chars"] = stats.get("markdown_chars")
+            return result
 
         data = otl_bytes["data"]
         if not data:

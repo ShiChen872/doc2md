@@ -13,6 +13,54 @@ sys.path.insert(0, str(SCRIPTS))
 import md_to_pdf as mtp  # noqa: E402
 
 
+def test_document_title_and_headings():
+    md = "> 来源: x\n\n# 竞对策略\n\n## 背景\n\n正文\n\n## 打法\n"
+    assert mtp.document_title(md, "fallback") == "竞对策略"
+    assert mtp.iter_headings(md) == [(1, "竞对策略"), (2, "背景"), (2, "打法")]
+    assert mtp.document_title("no heading", "文件名") == "文件名"
+
+
+def test_inject_toc_marker():
+    md = "# 标题\n\n## 一\n\nx\n\n## 二\n\ny\n"
+    out = mtp.inject_toc_marker(md)
+    assert "[TOC]" in out
+    assert out.index("# 标题") < out.index("[TOC]") < out.index("## 一")
+    assert mtp.inject_toc_marker("# Only\n\n## One\n") == "# Only\n\n## One\n"
+    already = "# T\n\n[TOC]\n\n## A\n\n## B\n"
+    assert mtp.inject_toc_marker(already) == already
+
+
+def test_build_print_html_includes_toc(tmp_path: Path):
+    md_path = tmp_path / "note.md"
+    md_path.write_text("# 报告\n\n## 背景\n\n文字\n\n## 结论\n\n完\n", encoding="utf-8")
+    html = mtp.build_print_html(md_path.read_text(encoding="utf-8"), md_path)
+    assert '<div class="toc">' in html
+    assert "目录" in html
+    assert ">背景<" in html or "背景" in html
+    html_off = mtp.build_print_html(
+        md_path.read_text(encoding="utf-8"), md_path, toc=False
+    )
+    assert "[TOC]" not in html_off
+    assert '<div class="toc">' not in html_off
+
+
+def test_build_print_html_skips_toc_for_pdf_preview(tmp_path: Path):
+    md_path = tmp_path / "slides.md"
+    md_path.write_text(
+        "> 类型: WPS PDF 分享（网页预览分页截图 + OCR）\n\n"
+        "# 演示\n\n"
+        "## 第 1 页\n\n"
+        "![](missing.png)\n\n"
+        "## 第 2 页\n\n"
+        "![](missing2.png)\n",
+        encoding="utf-8",
+    )
+    html = mtp.build_print_html(md_path.read_text(encoding="utf-8"), md_path)
+    assert "目录" not in html
+    assert "[TOC]" not in html
+    assert '<div class="toc">' not in html
+
+
 def test_default_pdf_output(tmp_path: Path):
     md = tmp_path / "notes.md"
     assert mtp.default_pdf_output(md) == tmp_path / "notes.pdf"

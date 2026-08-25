@@ -11,7 +11,7 @@ description: >-
 # doc2md — documents to Markdown
 
 Platform-neutral skill: all logic lives in Python CLI scripts under `scripts/`.
-Copy this whole directory to another agent platform's skills folder (Cursor, Codex, WPS Comate, etc.) and it works the same way.
+Copy this whole directory to another agent platform's skills folder (Cursor desktop, Cursor CLI, Codex, WPS Comate, etc.) and it works the same way.
 
 ## Setup (once per machine)
 
@@ -93,7 +93,7 @@ Only when the user asks for PDF. Markdown stays the source of truth.
 ~/.config/doc2md/venv/bin/python <this-skill>/scripts/md_to_pdf.py /path/to/out.md -o /path/to/out.pdf
 ```
 
-Uses system Chrome print (Playwright `channel=chrome`). Local `*_assets/` images are resolved; `<video>` / iframe become links. WPS PDF-preview exports print **page images only** (OCR stays in the `.md` for search; pass `--keep-ocr` to include a tiny gray OCR block).
+Uses system Chrome print (Playwright `channel=chrome`). Adds a **目录** from h2/h3, a header title, and page numbers. Local `*_assets/` images are resolved; `<video>` / iframe become links. WPS PDF-preview exports print **page images only** (OCR stays in the `.md` for search; pass `--keep-ocr` to include a tiny gray OCR block) and skip the TOC so “第 N 页” is not treated as an outline. `--no-toc` skips the table of contents.
 
 Do **not** call WPS `convert/to/pdf` or automate the WPS client. If Chrome print is not available, tell the user they can open the `.md` in WPS and 另存为 PDF (manual GUI, not a CLI engine).
 
@@ -121,7 +121,7 @@ Session: `~/.config/doc2md/feishu_storage_state.json` (and `feishu_cookie.txt` b
 | `otl_to_md.py` | OTL JSON → Markdown |
 | `feishu_login.py` | Headed Chrome login for Feishu/Lark |
 | `feishu_to_md.py` | Feishu wiki/docx URL → Markdown |
-| `md_to_pdf.py` | Local Markdown (+ assets) → PDF (Chrome print; optional) |
+| `md_to_pdf.py` | Local Markdown (+ assets) → PDF (Chrome print; 目录/页眉/页码; optional) |
 
 ## Image handling
 

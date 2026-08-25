@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.4.7
+
+- `md_to_pdf.py`: table of contents from h2/h3, header title, and page numbers (Chrome print; `--no-toc` to skip). PDF-preview Markdown skips TOC so slide pages are not listed as outline entries.
+
 ## v0.4.6
 
 - Optional second step: `md_to_pdf.py` prints local Markdown (+ `*_assets/`) to PDF via system Chrome

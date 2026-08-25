@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.6
+
+- Optional second step: `md_to_pdf.py` prints local Markdown (+ `*_assets/`) to PDF via system Chrome
+- WPS PDF-preview Markdown prints page images only (OCR stays in `.md`; `--keep-ocr` optional)
+- SKILL: only run PDF export when the user asks; WPS 「另存为 PDF」 is a manual fallback, not a CLI engine
+
 ## v0.4.5
 
 - WPS PDF shares: when original download is denied, screenshot web-viewer `.pdf-page` tiles + OCR (same idea as media HLS preview)

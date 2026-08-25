@@ -14,6 +14,7 @@ Works with Cursor, Codex, and other Agent Skills–compatible hosts. Copy this d
 - WPS intelligent docs (`.otl`): parse `open/otl` JSON; tables rendered as Markdown tables (including images in cells)
 - **WPS media** (`.mp4` / `view/media/l/`): Markdown card + cover; optional local `preview.mp4` via ffmpeg HLS remux when original download is denied
 - **WPS PDF shares**: if original download is denied, screenshot web-viewer pages (`page_NNN.png`) + OCR
+- **Markdown → PDF** (optional): `md_to_pdf.py` prints a local `.md` via Chrome; WPS Save As PDF is a manual fallback
 - **Feishu**: Playwright session (`feishu_login.py`) + in-page `PageMain` block tree → Markdown + assets; code fences keep language (enum mapped); file attachments and bookmarks from fallback blocks
 - **OTL images**: place by `sourceKey` / `imgID` (not array index); prefer CDN match; if incomplete, scroll + `/attachment/shapes` by `sourceKey`, with a second pass for any still-missing keys
 - Images saved as relative Markdown links (not base64)
@@ -59,7 +60,7 @@ Image files and **scanned/image-only PDFs** are OCR'd to recover text.
 
 If a WPS or Feishu session is missing or expired, a Chrome window opens for you to log in; conversion then continues. Pass `--no-login` to skip that prompt.
 
-Agents (Cursor / Codex / Comate) should run `doc2md.py` only. Do not call WPS official APIs, replay `WPS_SID`, or drive Chrome with AppleScript.
+Agents (Cursor / Codex / Comate) should run `doc2md.py` for conversion to Markdown. Do not call WPS official APIs, replay `WPS_SID`, or drive Chrome/WPS with AppleScript. Run `md_to_pdf.py` only when the user asks for a PDF.
 
 ### Local file
 
@@ -87,6 +88,14 @@ Agents (Cursor / Codex / Comate) should run `doc2md.py` only. Do not call WPS of
 ~/.config/doc2md/venv/bin/python scripts/feishu_to_md.py 'https://xxx.feishu.cn/wiki/XXXX' -o /path/to/out.md
 ```
 
+### Markdown → PDF (optional)
+
+```bash
+~/.config/doc2md/venv/bin/python scripts/md_to_pdf.py /path/to/out.md -o /path/to/out.pdf
+```
+
+Uses system Chrome. If Chrome print is unavailable, open the `.md` in WPS and 另存为 PDF (GUI only — not scripted).
+
 Session files live under `~/.config/doc2md/` (not in this repo):
 
 - `wps_storage_state.json` / `wps_cookie.txt`
@@ -104,6 +113,7 @@ Session files live under `~/.config/doc2md/` (not in this repo):
 | `otl_to_md.py` | OTL JSON → Markdown |
 | `feishu_login.py` | Headed Chrome login (Feishu/Lark) |
 | `feishu_to_md.py` | Feishu wiki/docx URL → Markdown |
+| `md_to_pdf.py` | Local Markdown → PDF (Chrome print) |
 
 See [SKILL.md](SKILL.md) for agent-oriented workflow instructions.
 

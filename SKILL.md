@@ -4,8 +4,8 @@ display_name: 文档转Markdown
 description: >-
   将本地文档、WPS/金山文档（kdocs / 365.kdocs / plus.wps.cn）与飞书/Lark 云文档（wiki / docx）分享链接转为 Markdown，图片提取到本地 assets 目录。
   支持 docx、pdf、pptx、xlsx、epub、html、图片 OCR、WPS 智能文档（.otl）、WPS 媒体/视频分享（view/media）及云文档分享链接。
-  使用场景：(1) 云文档/分享链接转 Markdown；(2) 本地 Office/PDF 转 md 并保留图片；(3) OTL / 飞书文档结构化导出；(4) WPS 视频分享转 md（封面 + 预览 mp4）。
-  触发关键词：转markdown、转md、doc2md、文档转markdown、云文档转md、kdocs转md、plus.wps、wps视频、媒体分享、view/media、飞书转md、feishu转md、otl转md、anything to markdown。
+  使用场景：(1) 云文档/分享链接转 Markdown；(2) 本地 Office/PDF 转 md 并保留图片；(3) OTL / 飞书文档结构化导出；(4) WPS 视频分享转 md（封面 + 预览 mp4）；(5) 已有 Markdown 再转 PDF（用户明确要求时）。
+  触发关键词：转markdown、转md、doc2md、文档转markdown、云文档转md、kdocs转md、plus.wps、wps视频、媒体分享、view/media、飞书转md、feishu转md、otl转md、转pdf、markdown转pdf、anything to markdown。
 ---
 
 # doc2md — documents to Markdown
@@ -29,6 +29,7 @@ Replace `<this-skill>` with the absolute path of this skill directory
 1. **Prefer the unified CLI** `doc2md.py` — it classifies local path vs WPS vs Feishu.
 2. If a WPS/Feishu session is missing or expired, conversion **opens Chrome** for the user to log in, then continues. Pass `--no-login` to skip (CI / non-interactive).
 3. After conversion, report image counts and confirm `*_assets/` beside the `.md`.
+4. **PDF is optional.** Only if the user asks to export PDF, run `md_to_pdf.py` on the `.md`. Do not emit PDF by default.
 
 ### Do not improvise (especially Comate)
 
@@ -40,8 +41,8 @@ The CLI is the conversion path. **Do not** invent a parallel one.
 
 **Never:**
 
-- Call WPS/kdocs official product APIs or host-bundled WPS tools (`file-content`, file download, `doc exports`, `WPS_SID`, cookie/token replay). Specified-user shares often return 403 even when the user can open the same link in Chrome.
-- Drive the user's already-open Chrome via AppleScript / `osascript`, or ask them to enable Chrome **View → Developer → Allow JavaScript from Apple Events**.
+- Call WPS/kdocs official product APIs or host-bundled WPS tools (`file-content`, file download, `doc exports`, `convert/to/pdf`, `WPS_SID`, cookie/token replay). Specified-user shares often return 403 even when the user can open the same link in Chrome.
+- Drive the user's already-open Chrome or WPS window via AppleScript / `osascript`, or ask them to enable Chrome **View → Developer → Allow JavaScript from Apple Events**.
 - Treat “the user can open this in the browser” as proof that those APIs will work. The CLI uses Playwright + `~/.config/doc2md/wps_storage_state.json`. If original download is denied, it uses the **web viewer** (PDF page screenshots + OCR, OTL JSON, or media HLS preview).
 
 If the CLI fails, report its stderr. Do not ask the user to toggle Chrome Apple Events. If the session expired, rerun **without** `--no-login` so Chrome opens for login. Last resort: user exports in the product UI, then `convert.py` on the local file.
@@ -84,6 +85,18 @@ Session files (platform-agnostic):
 
 **WPS PDF notes:** when original PDF download is denied, the CLI screenshots each web-viewer page (`.pdf-page`) into `*_assets/page_NNN.png` and OCRs the tiles. Page images are the source of truth; OCR is for search.
 
+### Markdown → PDF (optional)
+
+Only when the user asks for PDF. Markdown stays the source of truth.
+
+```bash
+~/.config/doc2md/venv/bin/python <this-skill>/scripts/md_to_pdf.py /path/to/out.md -o /path/to/out.pdf
+```
+
+Uses system Chrome print (Playwright `channel=chrome`). Local `*_assets/` images are resolved; `<video>` / iframe become links. WPS PDF-preview exports print **page images only** (OCR stays in the `.md` for search; pass `--keep-ocr` to include a tiny gray OCR block).
+
+Do **not** call WPS `convert/to/pdf` or automate the WPS client. If Chrome print is not available, tell the user they can open the `.md` in WPS and 另存为 PDF (manual GUI, not a CLI engine).
+
 ### Feishu / Lark share link
 
 ```bash
@@ -108,6 +121,7 @@ Session: `~/.config/doc2md/feishu_storage_state.json` (and `feishu_cookie.txt` b
 | `otl_to_md.py` | OTL JSON → Markdown |
 | `feishu_login.py` | Headed Chrome login for Feishu/Lark |
 | `feishu_to_md.py` | Feishu wiki/docx URL → Markdown |
+| `md_to_pdf.py` | Local Markdown (+ assets) → PDF (Chrome print; optional) |
 
 ## Image handling
 
@@ -124,7 +138,7 @@ Session: `~/.config/doc2md/feishu_storage_state.json` (and `feishu_cookie.txt` b
 1. Conversion opens headed Chrome when the session is missing/expired; user logs in themselves. Use `--no-login` plus `wps_login.py` / `feishu_login.py` if you need to log in separately.
 2. If still failing (password-protected link, rate limit, unsupported type): ask user to export/download in the product UI, then `convert.py` on the local file.
 3. Do not invent credentials or scrape login forms — only open a browser for the user to log in themselves.
-4. Do not fall back to host WPS APIs, AppleScript, or Chrome “JavaScript from Apple Events”.
+4. Do not fall back to host WPS APIs, AppleScript, Chrome “JavaScript from Apple Events”, or WPS `convert/to/pdf`.
 5. Feishu: code fences keep language (numeric CodeLanguage mapped); file attachments download when present; bitable / sheet / mindnote are skipped with an HTML comment; legacy `/docs/` may need upgrade to new docx.
 
 ## Portability
@@ -135,4 +149,4 @@ Session: `~/.config/doc2md/feishu_storage_state.json` (and `feishu_cookie.txt` b
 
 ## Supported formats
 
-markitdown formats (docx, pptx, xlsx, pdf, html, epub, …) + WPS share links (365 / `.otl` / `plus.wps.cn` media) + Feishu/Lark wiki & docx links.
+markitdown formats (docx, pptx, xlsx, pdf, html, epub, …) + WPS share links (365 / `.otl` / `plus.wps.cn` media) + Feishu/Lark wiki & docx links. Optional: local Markdown → PDF via `md_to_pdf.py`.

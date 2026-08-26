@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.4.10
+
+- Recognize WPS knowledge-wiki share URLs (`365.kdocs.cn/wiki/l/…`); `wiki/l/0l<id>` resolves to the inner file share id.
+- WPS presentation shares (`.pptx`, `office_type=p`) that deny original download: screenshot each web-viewer slide (same idea as PDF preview), instead of falling through to OTL and failing.
+
+## v0.4.9
+
+- Optional Typst PDF engine and `brand` theme (navy/accent report styling, no logo). Default remains Chrome print (`--engine chrome --theme default`).
+- `md_to_pdf.py --engine typst --theme brand`: 目录 / 页眉标题 / 页码; PDF-preview Markdown still prints page images without a TOC.
+- Typst needs the official CLI on PATH (macOS Homebrew, Windows winget/scoop/GitHub zip, or Linux release tarball) or `pip install typst`. Missing Typst is an error, not a silent Chrome fallback.
+
 ## v0.4.8
 
 - OTL nested file cards (`WPSDocument`) emit as Markdown links instead of being dropped (block, inline, and table cells). Nested files are not recursively converted.

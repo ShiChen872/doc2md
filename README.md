@@ -14,7 +14,8 @@ Works with Cursor (desktop or CLI), Codex, and other Agent Skills–compatible h
 - WPS intelligent docs (`.otl`): parse `open/otl` JSON; tables rendered as Markdown tables (including images in cells); nested file cards become Markdown links
 - **WPS media** (`.mp4` / `view/media/l/`): Markdown card + cover; optional local `preview.mp4` via ffmpeg HLS remux when original download is denied
 - **WPS PDF shares**: if original download is denied, screenshot web-viewer pages (`page_NNN.png`) + OCR
-- **Markdown → PDF** (optional): `md_to_pdf.py` prints a local `.md` via Chrome (目录 / 页眉 / 页码); WPS Save As PDF is a manual fallback
+- **WPS presentations**: if `.pptx` download is denied, screenshot each web-viewer slide; `wiki/l/` knowledge links resolve to the file share
+- **Markdown → PDF** (optional): `md_to_pdf.py` prints a local `.md` via Chrome by default (目录 / 页眉 / 页码). `--engine typst --theme brand` is optional branded typesetting (needs Typst). WPS Save As PDF is a manual fallback
 - **Feishu**: Playwright session (`feishu_login.py`) + in-page `PageMain` block tree → Markdown + assets; code fences keep language (enum mapped); file attachments and bookmarks from fallback blocks
 - **OTL images**: place by `sourceKey` / `imgID` (not array index); prefer CDN match; if incomplete, scroll + `/attachment/shapes` by `sourceKey`, with a second pass for any still-missing keys
 - Images saved as relative Markdown links (not base64)
@@ -91,10 +92,20 @@ Agents (Cursor / Codex / Comate) should run `doc2md.py` for conversion to Markdo
 ### Markdown → PDF (optional)
 
 ```bash
+# Default: Chrome print
 ~/.config/doc2md/venv/bin/python scripts/md_to_pdf.py /path/to/out.md -o /path/to/out.pdf
+
+# Optional: Typst + brand theme (CLI on PATH, or `pip install typst`)
+~/.config/doc2md/venv/bin/python scripts/md_to_pdf.py /path/to/out.md -o /path/to/out.pdf --engine typst --theme brand
 ```
 
-Uses system Chrome. Inserts a 目录 from h2/h3, header title, and page numbers (`--no-toc` to skip). PDF-preview Markdown skips the TOC. If Chrome print is unavailable, open the `.md` in WPS and 另存为 PDF (GUI only — not scripted).
+Typst is **not macOS-only**. Install the official binary, then the same `--engine typst` flag works:
+
+- macOS: `brew install typst`
+- Windows: `winget install --id Typst.Typst -e` (or `scoop install typst`, or unzip [GitHub Releases](https://github.com/typst/typst/releases) `typst-*-pc-windows-msvc.zip` onto PATH)
+- Linux: same Releases page
+
+Chrome inserts a 目录 from h2/h3, header title, and page numbers (`--no-toc` to skip). `--theme brand` uses navy/accent report colors (no logo). PDF-preview Markdown skips the TOC. If Chrome print is unavailable, open the `.md` in WPS and 另存为 PDF (GUI only — not scripted). Without Typst, keep `--engine chrome` (the default).
 
 Session files live under `~/.config/doc2md/` (not in this repo):
 
@@ -113,7 +124,7 @@ Session files live under `~/.config/doc2md/` (not in this repo):
 | `otl_to_md.py` | OTL JSON → Markdown |
 | `feishu_login.py` | Headed Chrome login (Feishu/Lark) |
 | `feishu_to_md.py` | Feishu wiki/docx URL → Markdown |
-| `md_to_pdf.py` | Local Markdown → PDF (Chrome print; 目录/页眉/页码) |
+| `md_to_pdf.py` | Local Markdown → PDF (Chrome default; optional Typst brand theme) |
 
 See [SKILL.md](SKILL.md) for agent-oriented workflow instructions.
 

@@ -8,12 +8,13 @@ Uses Playwright storage from wps_login.py:
   ~/.config/doc2md/wps_storage_state.json
 
 Flow:
-  1. Open share URL with saved session
+  1. Open share URL with saved session (wiki/l/ ids resolved to the file share)
   2. Resolve file meta via drive links API
   3. Try binary download (Office files)
   4. If blocked PDF: screenshot web-viewer `.pdf-page` tiles + OCR → Markdown
-  5. If blocked / .otl intelligent doc: capture open/otl JSON + CDN images → Markdown
-  6. Otherwise run convert.py on the downloaded Office file
+  5. If blocked presentation (`.pptx` / office_type=p): screenshot each slide
+  6. If blocked / .otl intelligent doc: capture open/otl JSON + CDN images → Markdown
+  7. Otherwise run convert.py on the downloaded Office file
 """
 
 from __future__ import annotations
@@ -32,7 +33,7 @@ CFG = Path.home() / ".config" / "doc2md"
 DEFAULT_STATE = CFG / "wps_storage_state.json"
 SCRIPTS = Path(__file__).resolve().parent
 SHARE_ID_RE = re.compile(
-    r"(?:kdocs\.cn|wps\.cn)/(?:l|view/l|view/media/l)/([A-Za-z0-9_-]+)",
+    r"(?:kdocs\.cn|wps\.cn)/(?:wiki/l|l|view/l|view/media/l)/([A-Za-z0-9_-]+)",
     re.IGNORECASE,
 )
 SAFE_NAME_RE = re.compile(r"[^\w.\u4e00-\u9fff\-]+")
@@ -52,6 +53,9 @@ PDF_PAGE_SEL = ".pdf-page"
 PDF_PAGE_INPUT_SEL = "input.kd-input-inner-align-center"
 PDF_PAGE_LABEL_RE = re.compile(r"(\d+)\s*/\s*(\d+)")
 MAX_PDF_PREVIEW_PAGES = 200
+WPP_SLIDE_SEL = ".slide-uil-view"
+PPT_EXTS = {".ppt", ".pptx", ".pptm", ".pps", ".ppsx"}
+MAX_WPP_PREVIEW_PAGES = 200
 
 
 class WpsError(Exception):
@@ -63,6 +67,25 @@ def extract_share_id(url: str) -> str:
     if not m:
         raise WpsError(f"Cannot parse share id from URL: {url}")
     return m.group(1)
+
+
+def share_id_candidates(url: str) -> list[str]:
+    """WPS 知识库 wiki/l/0l<id> often needs the inner share id without the 0l prefix."""
+    sid = extract_share_id(url)
+    out = [sid]
+    if re.search(r"/(?:wiki/l)/", url, re.I) and sid.startswith("0l") and len(sid) > 10:
+        out.append(sid[2:])
+    return list(dict.fromkeys(out))
+
+
+def viewer_share_url(sid: str) -> str:
+    return f"https://365.kdocs.cn/l/{sid}"
+
+
+def is_presentation_share(fname: str = "", office_type: str = "") -> bool:
+    if Path(fname or "").suffix.lower() in PPT_EXTS:
+        return True
+    return str(office_type or "").lower() in {"p", "wpp", "presentation"}
 
 
 def is_media_filename(fname: str) -> bool:
@@ -265,11 +288,16 @@ def build_pdf_preview_markdown(
     title: str,
     source_url: str,
     pages: list[tuple[str, str]],
+    kind: str = "pdf",
 ) -> str:
-    """Markdown for a WPS PDF share captured from the web viewer (page PNG + OCR)."""
+    """Markdown for a WPS PDF / presentation share captured from the web viewer."""
+    if kind == "presentation":
+        type_line = "> 类型: WPS 演示文稿分享（网页预览分页截图；分享禁止原文件下载）"
+    else:
+        type_line = "> 类型: WPS PDF 分享（网页预览分页截图 + OCR）"
     lines = [
         f"> 来源: {source_url}",
-        "> 类型: WPS PDF 分享（网页预览分页截图 + OCR）",
+        type_line,
         "",
         f"# {title}",
         "",
@@ -741,12 +769,109 @@ def capture_pdf_preview_pages(page, assets_dir: Path) -> list[Path]:
     return saved
 
 
+def _wpp_total_pages(page) -> int | None:
+    try:
+        n = page.evaluate("() => window.__WPSENV__ && window.__WPSENV__.wpp_total_pages")
+    except Exception:
+        return None
+    if isinstance(n, int) and 1 <= n <= MAX_WPP_PREVIEW_PAGES:
+        return n
+    return None
+
+
+def capture_wpp_preview_pages(page, assets_dir: Path) -> list[Path]:
+    """Screenshot each WPS presentation slide (download-denied .pptx)."""
+    try:
+        page.wait_for_selector(WPP_SLIDE_SEL, timeout=25000)
+    except Exception:
+        return []
+    try:
+        page.set_viewport_size({"width": 1600, "height": 1000})
+    except Exception:
+        pass
+    page.wait_for_timeout(800)
+    loc = page.locator(WPP_SLIDE_SEL).first
+    try:
+        thumb = page.locator(".thumbnail_slide").first
+        if thumb.count() > 0:
+            thumb.click(timeout=5000)
+            page.wait_for_timeout(700)
+    except Exception:
+        pass
+    try:
+        loc.click(timeout=5000)
+    except Exception:
+        pass
+
+    total = _wpp_total_pages(page)
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    for old in assets_dir.glob("page_*.png"):
+        old.unlink()
+
+    saved: list[Path] = []
+    seen: set[str] = set()
+    limit = total or MAX_WPP_PREVIEW_PAGES
+    consecutive_dupes = 0
+    for n in range(1, limit + 1):
+        if n > 1:
+            prev = hashlib.sha256(saved[-1].read_bytes()).hexdigest() if saved else ""
+            try:
+                loc.click(timeout=3000)
+            except Exception:
+                pass
+            page.keyboard.press("PageDown")
+            changed = False
+            for _ in range(20):
+                page.wait_for_timeout(200)
+                probe = assets_dir / ".wpp_probe.png"
+                try:
+                    loc.screenshot(path=str(probe))
+                    digest_p = hashlib.sha256(probe.read_bytes()).hexdigest()
+                except Exception:
+                    digest_p = prev
+                finally:
+                    probe.unlink(missing_ok=True)
+                if digest_p and digest_p != prev:
+                    changed = True
+                    break
+            if not changed and not total:
+                break
+        dest = assets_dir / f"page_{n:03d}.png"
+        try:
+            loc.wait_for(state="visible", timeout=8000)
+            loc.screenshot(path=str(dest))
+        except Exception:
+            break
+        if not dest.is_file() or dest.stat().st_size < 500:
+            dest.unlink(missing_ok=True)
+            break
+        digest = hashlib.sha256(dest.read_bytes()).hexdigest()
+        if digest in seen:
+            dest.unlink(missing_ok=True)
+            consecutive_dupes += 1
+            if total and n < total:
+                continue
+            if consecutive_dupes >= 2:
+                break
+            continue
+        consecutive_dupes = 0
+        seen.add(digest)
+        saved.append(dest)
+        if total is None:
+            total = _wpp_total_pages(page)
+            if total:
+                limit = total
+    return saved
+
+
 def write_pdf_preview_markdown(
     *,
     title: str,
     source_url: str,
     output_md: Path,
     page_files: list[Path],
+    kind: str = "pdf",
+    ocr: bool = True,
 ) -> dict:
     from convert import ocr_image_text
 
@@ -755,10 +880,14 @@ def write_pdf_preview_markdown(
     engines: set[str] = set()
     for img in page_files:
         rel = f"{assets_dir.name}/{img.name}"
-        ocr, engine = ocr_image_text(img)
-        engines.add(engine)
-        pages.append((rel, ocr))
-    md = build_pdf_preview_markdown(title=title, source_url=source_url, pages=pages)
+        text = ""
+        if ocr:
+            text, engine = ocr_image_text(img)
+            engines.add(engine)
+        pages.append((rel, text))
+    md = build_pdf_preview_markdown(
+        title=title, source_url=source_url, pages=pages, kind=kind
+    )
     output_md.parent.mkdir(parents=True, exist_ok=True)
     output_md.write_text(md, encoding="utf-8")
     return {
@@ -825,35 +954,48 @@ def _share_to_markdown_once(url: str, output_md: Path, *, auto_login: bool = Tru
         # --- link meta ---
         # Prefer 365 / www first: drive.kdocs.cn often hangs from some networks.
         # drive.wps.cn works well for plus.wps.cn media shares.
-        meta_urls = [
-            f"https://drive.wps.cn/api/v5/links/{sid}?review=true",
-            f"https://365.kdocs.cn/3rd/drive/api/v5/links/{sid}",
-            f"https://www.kdocs.cn/3rd/drive/api/v5/links/{sid}",
-            f"https://drive.kdocs.cn/api/v5/links/{sid}",
-        ]
         meta = None
-        for mu in meta_urls:
-            try:
-                r = context.request.get(
-                    mu,
-                    headers={
-                        "Accept": "application/json",
-                        "Referer": url,
-                        "Origin": "https://365.kdocs.cn",
-                    },
-                    timeout=15000,
-                )
-            except Exception:
-                continue
-            if r.status == 200:
+        resolved_sid = sid
+        for cand in share_id_candidates(url):
+            meta_urls = [
+                f"https://drive.wps.cn/api/v5/links/{cand}?review=true",
+                f"https://365.kdocs.cn/3rd/drive/api/v5/links/{cand}",
+                f"https://www.kdocs.cn/3rd/drive/api/v5/links/{cand}",
+                f"https://drive.kdocs.cn/api/v5/links/{cand}",
+            ]
+            for mu in meta_urls:
                 try:
-                    meta = r.json()
-                    break
+                    r = context.request.get(
+                        mu,
+                        headers={
+                            "Accept": "application/json",
+                            "Referer": url,
+                            "Origin": "https://365.kdocs.cn",
+                        },
+                        timeout=15000,
+                    )
                 except Exception:
                     continue
+                if r.status != 200:
+                    continue
+                try:
+                    payload = r.json()
+                except Exception:
+                    continue
+                fi_try = payload.get("fileinfo") or {}
+                if fi_try.get("id") or fi_try.get("fname") or fi_try.get("name"):
+                    meta = payload
+                    resolved_sid = cand
+                    break
+            if meta:
+                break
         if not meta:
             browser.close()
             raise _SessionExpired()
+
+        sid = resolved_sid
+        result["share_id"] = sid
+        open_url = viewer_share_url(sid)
 
         fi = meta.get("fileinfo") or {}
         file_id = str(fi.get("id") or "")
@@ -872,6 +1014,7 @@ def _share_to_markdown_once(url: str, output_md: Path, *, auto_login: bool = Tru
         is_otl = fname.lower().endswith(".otl") or ftype.lower() in {"otl", "o", "outline"}
         is_media = is_media_filename(fname) or "/view/media/" in url.lower()
         is_pdf = is_pdf_share(fname, ftype=ftype)
+        is_wpp = is_presentation_share(fname)
 
         # --- media / video share: Markdown card + cover (no Office body) ---
         if is_media and file_id and group_id:
@@ -1124,17 +1267,12 @@ def _share_to_markdown_once(url: str, output_md: Path, *, auto_login: bool = Tru
 
         page.on("response", on_response)
         # WPS weboffice keeps websockets/polling alive — networkidle often never settles.
-        page.goto(url, wait_until="domcontentloaded", timeout=120000)
+        page.goto(open_url, wait_until="domcontentloaded", timeout=120000)
         try:
             page.wait_for_load_state("load", timeout=30000)
         except Exception:
             pass
-        page.wait_for_timeout(5000)
-        try:
-            page.mouse.wheel(0, 2500)
-            page.wait_for_timeout(2500)
-        except Exception:
-            pass
+        page.wait_for_timeout(4000)
 
         # Fallback: read __WPSENV__ and confirm office type
         try:
@@ -1150,6 +1288,9 @@ def _share_to_markdown_once(url: str, output_md: Path, *, auto_login: bool = Tru
                         office_type=str(env.get("office_type") or ""),
                         ftype=ftype,
                     )
+                is_wpp = is_wpp or is_presentation_share(
+                    fname, office_type=str(env.get("office_type") or "")
+                )
         except Exception:
             pass
 
@@ -1186,6 +1327,49 @@ def _share_to_markdown_once(url: str, output_md: Path, *, auto_login: bool = Tru
             result["assets_dir"] = stats.get("assets_dir")
             result["markdown_chars"] = stats.get("markdown_chars")
             return result
+
+        # Presentation shares often deny original download; screenshot each slide.
+        wpp_ready = False
+        if is_wpp or page.locator(WPP_SLIDE_SEL).count() > 0:
+            try:
+                page.wait_for_selector(WPP_SLIDE_SEL, timeout=15000)
+                wpp_ready = True
+            except Exception:
+                wpp_ready = False
+        if wpp_ready:
+            stem = safe_stem(Path(fname).stem if fname else sid)
+            if output_md.name in {"out.md", "output.md"} or output_md.stem == "wps_out":
+                output_md = output_md.with_name(f"{stem}.md")
+                result["output"] = str(output_md)
+            assets_dir = output_md.parent / f"{output_md.stem}_assets"
+            page_files = capture_wpp_preview_pages(page, assets_dir)
+            browser.close()
+            if not page_files:
+                raise WpsError(
+                    "Could not capture presentation slides. "
+                    "Re-run wps_login.py, or export the .pptx from the WPS UI and run convert.py."
+                )
+            stats = write_pdf_preview_markdown(
+                title=Path(fname).stem or stem,
+                source_url=url,
+                output_md=output_md,
+                page_files=page_files,
+                kind="presentation",
+                ocr=False,
+            )
+            result["mode"] = "wpp-preview"
+            result["convert"] = stats
+            result["pages"] = stats.get("pages")
+            result["assets_dir"] = stats.get("assets_dir")
+            result["markdown_chars"] = stats.get("markdown_chars")
+            return result
+
+        # OTL path: scroll to lazy-load CDN images / shapes.
+        try:
+            page.mouse.wheel(0, 2500)
+            page.wait_for_timeout(2500)
+        except Exception:
+            pass
 
         data = otl_bytes["data"]
         if not data:

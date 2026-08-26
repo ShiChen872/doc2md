@@ -26,7 +26,7 @@ CFG = Path.home() / ".config" / "doc2md"
 DEFAULT_STATE = CFG / "wps_storage_state.json"
 SCRIPTS = Path(__file__).resolve().parent
 SHARE_ID_RE = re.compile(
-    r"(?:kdocs\.cn|wps\.cn)/(?:l|view/l|view/media/l)/([A-Za-z0-9_-]+)",
+    r"(?:kdocs\.cn|wps\.cn)/(?:wiki/l|l|view/l|view/media/l)/([A-Za-z0-9_-]+)",
     re.IGNORECASE,
 )
 SAFE_NAME_RE = re.compile(r"[^\w.\u4e00-\u9fff\-]+")

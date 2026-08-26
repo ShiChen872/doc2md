@@ -30,6 +30,27 @@ def test_extract_share_id_media_path():
     )
 
 
+def test_extract_share_id_wiki_path():
+    assert (
+        wtm.extract_share_id("https://365.kdocs.cn/wiki/l/0lcoPwGoRMiAkL")
+        == "0lcoPwGoRMiAkL"
+    )
+    assert wtm.share_id_candidates("https://365.kdocs.cn/wiki/l/0lcoPwGoRMiAkL") == [
+        "0lcoPwGoRMiAkL",
+        "coPwGoRMiAkL",
+    ]
+    assert wtm.share_id_candidates("https://365.kdocs.cn/l/coPwGoRMiAkL") == [
+        "coPwGoRMiAkL"
+    ]
+
+
+def test_is_presentation_share():
+    assert wtm.is_presentation_share("通威太阳能.pptx")
+    assert wtm.is_presentation_share("deck", office_type="p")
+    assert not wtm.is_presentation_share("notes.docx")
+    assert not wtm.is_presentation_share("notes.otl", office_type="s")
+
+
 def test_is_media_filename():
     assert wtm.is_media_filename("comate-产品介绍.mp4")
     assert wtm.is_media_filename("a.MOV")
@@ -65,6 +86,14 @@ def test_build_pdf_preview_markdown():
     )
     assert "# 竞对策略" in md
     assert "网页预览分页截图" in md
+    deck = wtm.build_pdf_preview_markdown(
+        title="通威",
+        source_url="https://365.kdocs.cn/wiki/l/0lcoPwGoRMiAkL",
+        pages=[("deck_assets/page_001.png", "")],
+        kind="presentation",
+    )
+    assert "演示文稿" in deck
+    assert "![](deck_assets/page_001.png)" in deck
     assert "![](竞对策略_assets/page_001.png)" in md
     assert "封面文字" in md
     assert "## 第 2 页" in md

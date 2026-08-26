@@ -23,6 +23,8 @@ def test_classify_wps_kdocs():
     assert cli.classify("https://365.kdocs.cn/l/ccPEq4cqQmKT") == "wps"
     assert cli.classify("https://plus.wps.cn/view/media/l/cnU6phmAZZKr") == "wps"
     assert cli.classify("www.kdocs.cn/l/abc123") == "wps"
+    assert cli.classify("https://365.kdocs.cn/wiki/l/0lcoPwGoRMiAkL") == "wps"
+    assert cli.classify("365.kdocs.cn/wiki/l/0lcoPwGoRMiAkL") == "wps"
 
 
 def test_classify_feishu():

@@ -23,7 +23,7 @@ sys.path.insert(0, str(SCRIPTS))
 Kind = str  # "local" | "wps" | "feishu"
 
 WPS_HINT_RE = re.compile(
-    r"(?:kdocs\.cn|wps\.cn)/(?:l|view/l|view/media/l)/[A-Za-z0-9_-]+",
+    r"(?:kdocs\.cn|wps\.cn)/(?:wiki/l|l|view/l|view/media/l)/[A-Za-z0-9_-]+",
     re.IGNORECASE,
 )
 FEISHU_PATH_RE = re.compile(

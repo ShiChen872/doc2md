@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Convert a local Markdown file (plus sibling *_assets/) to PDF via Chrome print.
+"""Convert a local Markdown file (plus sibling *_assets/) to PDF.
 
 Usage:
-  md_to_pdf.py <input.md> [-o OUTPUT.pdf] [--no-toc] [--keep-ocr]
+  md_to_pdf.py <input.md> [-o OUTPUT.pdf] [--engine chrome|typst]
+               [--theme default|brand] [--no-toc] [--keep-ocr]
 
-This is an optional second step after doc2md.py. Markdown stays the source of
-truth; PDF is a derived archive. Do not call WPS convert APIs or drive the
-WPS client — if you want WPS layout, open the .md in WPS and 另存为 PDF.
+Default engine is Chrome print (no extra install). Typst is optional and used
+for branded typesetting (`--engine typst --theme brand`). Markdown stays the
+source of truth. Do not call WPS convert APIs or drive the WPS client.
 """
 
 from __future__ import annotations
@@ -19,6 +20,15 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 SCRIPTS = Path(__file__).resolve().parent
+if str(SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS))
+
+from md_to_typst import (  # noqa: E402
+    TypstError,
+    compile_typst,
+    markdown_to_typst_source,
+    theme_tokens,
+)
 
 HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 VIDEO_TAG_RE = re.compile(r"<video\b([^>]*)>(.*?)</video>", re.IGNORECASE | re.DOTALL)
@@ -36,44 +46,62 @@ HEADING_RE = re.compile(r"^#{1,6}\s+", re.MULTILINE)
 ATX_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 TOC_MARKER_RE = re.compile(r"(?m)^\[TOC\]\s*$")
 
-PRINT_CSS = """
-@page { size: A4; margin: 20mm 14mm 18mm 14mm; }
-html, body {
+def print_css(theme: str = "default") -> str:
+    c = theme_tokens(theme)
+    h1_extra = (
+        f"color: {c['navy']}; border-bottom: 1.5px solid {c['accent']}; "
+        "padding-bottom: 0.18em;"
+        if theme == "brand"
+        else ""
+    )
+    h2_extra = f"color: {c['navy']};" if theme == "brand" else ""
+    return f"""
+@page {{ size: A4; margin: 20mm 14mm 18mm 14mm; }}
+html, body {{
   font-family: "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC",
     "Microsoft YaHei", "Source Han Sans SC", sans-serif;
   font-size: 12pt;
   line-height: 1.45;
-  color: #111;
+  color: {c["text"]};
   -webkit-print-color-adjust: exact;
   print-color-adjust: exact;
-}
-img { max-width: 100%; height: auto; page-break-inside: avoid; }
-h1, h2, h3 { page-break-after: avoid; }
-pre, code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-pre { white-space: pre-wrap; word-break: break-word; background: #f6f8fa; padding: 8px 10px; }
-table { border-collapse: collapse; width: 100%; font-size: 0.9em; margin: 0.6em 0; }
-th, td { border: 1px solid #ccc; padding: 4px 8px; vertical-align: top; }
-blockquote { color: #444; border-left: 3px solid #ddd; margin-left: 0; padding-left: 12px; }
-.ocr-aux {
+}}
+img {{ max-width: 100%; height: auto; page-break-inside: avoid; }}
+h1, h2, h3 {{ page-break-after: avoid; }}
+h1 {{ {h1_extra} }}
+h2 {{ {h2_extra} }}
+pre, code {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }}
+pre {{ white-space: pre-wrap; word-break: break-word; background: {c["code_bg"]}; padding: 8px 10px; }}
+table {{ border-collapse: collapse; width: 100%; font-size: 0.9em; margin: 0.6em 0; }}
+th, td {{ border: 1px solid {c["table_stroke"]}; padding: 4px 8px; vertical-align: top; }}
+th {{ background: {c["table_head"]}; color: {c["navy"]}; }}
+a {{ color: {c["accent"]}; }}
+blockquote {{ color: #444; border-left: 3px solid {c["quote"]}; margin-left: 0; padding-left: 12px; }}
+.ocr-aux {{
   font-size: 8px;
   line-height: 1.25;
   color: #888;
   max-height: 4.8em;
   overflow: hidden;
   margin: 0.15em 0 0.8em;
-}
-.video-fallback, .iframe-fallback { margin: 0.6em 0; }
-.page-figure { margin: 0.4em 0 0.2em; }
-div.toc { font-size: 0.92em; margin: 0 0 1.6em; }
-div.toc .toctitle {
+}}
+.video-fallback, .iframe-fallback {{ margin: 0.6em 0; }}
+.page-figure {{ margin: 0.4em 0 0.2em; }}
+div.toc {{ font-size: 0.92em; margin: 0 0 1.6em; }}
+div.toc .toctitle {{
   display: block;
   font-size: 1.15em;
   font-weight: 600;
   margin: 0 0 0.45em;
-}
-div.toc ul { padding-left: 1.2em; margin: 0.2em 0; }
-div.toc a { color: inherit; text-decoration: none; }
+  color: {c["navy"]};
+}}
+div.toc ul {{ padding-left: 1.2em; margin: 0.2em 0; }}
+div.toc a {{ color: inherit; text-decoration: none; }}
 """
+
+
+# Back-compat for tests that look for PingFang in PRINT_CSS / default HTML.
+PRINT_CSS = print_css("default")
 
 
 class MdPdfError(Exception):
@@ -296,6 +324,7 @@ def preprocess_markdown(
     *,
     keep_ocr: bool = False,
     toc: bool = True,
+    rewrite_urls: bool = True,
 ) -> str:
     text = strip_html_comments(text)
     text = degrade_video_tags(text)
@@ -303,7 +332,9 @@ def preprocess_markdown(
     text = demote_pdf_preview_ocr(text, keep_ocr=keep_ocr)
     if toc and not is_pdf_preview_markdown(text):
         text = inject_toc_marker(text)
-    return rewrite_local_urls(text, md_dir)
+    if rewrite_urls:
+        return rewrite_local_urls(text, md_dir)
+    return text
 
 
 def markdown_to_body_html(text: str) -> str:
@@ -329,13 +360,14 @@ def markdown_to_body_html(text: str) -> str:
     )
 
 
-def wrap_document(body_html: str, *, title: str) -> str:
+def wrap_document(body_html: str, *, title: str, theme: str = "default") -> str:
     safe_title = html_lib.escape(title or "document")
+    css = print_css(theme)
     return (
         "<!DOCTYPE html>\n<html lang=\"zh-CN\">\n<head>\n"
         '<meta charset="utf-8"/>\n'
         f"<title>{safe_title}</title>\n"
-        f"<style>{PRINT_CSS}</style>\n"
+        f"<style>{css}</style>\n"
         "</head>\n<body>\n"
         f"{body_html}\n"
         "</body>\n</html>\n"
@@ -348,32 +380,45 @@ def build_print_html(
     *,
     keep_ocr: bool = False,
     toc: bool = True,
+    theme: str = "default",
 ) -> str:
     md_dir = md_path.parent.resolve()
     prepared = preprocess_markdown(md_text, md_dir, keep_ocr=keep_ocr, toc=toc)
     body = markdown_to_body_html(prepared)
     body = rewrite_local_urls(body, md_dir)
     title = document_title(md_text, md_path.stem)
-    return wrap_document(body, title=title)
+    return wrap_document(body, title=title, theme=theme)
 
 
-HEADER_TEMPLATE = """
-<div style="font-size:9px;color:#666;width:100%;padding:0 14mm;
+def header_template(theme: str = "default") -> str:
+    c = theme_tokens(theme)
+    return f"""
+<div style="font-size:9px;color:{c['muted']};width:100%;padding:0 14mm;
   font-family:'PingFang SC','Microsoft YaHei',sans-serif;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
-  <span class="title"></span>
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  border-bottom:1.5px solid {c['header_bar']};">
+  <span class="title" style="color:{c['navy']};font-weight:600;"></span>
 </div>
 """
 
-FOOTER_TEMPLATE = """
-<div style="font-size:9px;color:#666;width:100%;padding:0 14mm;text-align:center;
+
+def footer_template(theme: str = "default") -> str:
+    c = theme_tokens(theme)
+    return f"""
+<div style="font-size:9px;color:{c['muted']};width:100%;padding:0 14mm;text-align:center;
   font-family:'PingFang SC','Microsoft YaHei',sans-serif;">
   <span class="pageNumber"></span> / <span class="totalPages"></span>
 </div>
 """
 
 
-def render_pdf_with_chrome(html: str, output_pdf: Path, *, md_dir: Path) -> None:
+HEADER_TEMPLATE = header_template("default")
+FOOTER_TEMPLATE = footer_template("default")
+
+
+def render_pdf_with_chrome(
+    html: str, output_pdf: Path, *, md_dir: Path, theme: str = "default"
+) -> None:
     """Print HTML via system Chrome. Writes a sibling temp file so local images load."""
     from playwright.sync_api import sync_playwright
 
@@ -399,8 +444,8 @@ def render_pdf_with_chrome(html: str, output_pdf: Path, *, md_dir: Path) -> None
                 format="A4",
                 print_background=True,
                 display_header_footer=True,
-                header_template=HEADER_TEMPLATE,
-                footer_template=FOOTER_TEMPLATE,
+                header_template=header_template(theme),
+                footer_template=footer_template(theme),
                 margin={
                     "top": "20mm",
                     "bottom": "18mm",
@@ -422,12 +467,58 @@ def render_pdf_with_chrome(html: str, output_pdf: Path, *, md_dir: Path) -> None
         raise MdPdfError("Chrome print produced an empty PDF.")
 
 
+def render_pdf_with_typst(
+    md_text: str,
+    md_path: Path,
+    output_pdf: Path,
+    *,
+    keep_ocr: bool = False,
+    toc: bool = True,
+    theme: str = "brand",
+) -> str:
+    """Write a temp .typ next to the Markdown and compile. Returns Typst source."""
+    md_dir = md_path.parent.resolve()
+    # Keep relative asset paths; Typst resolves them from the .typ file.
+    prepared = preprocess_markdown(
+        md_text,
+        md_dir,
+        keep_ocr=keep_ocr,
+        toc=False,  # Typst outline is generated from headings, not [TOC]
+        rewrite_urls=False,
+    )
+    title = document_title(md_text, md_path.stem)
+    sections = [t for level, t in iter_headings(md_text) if level in {2, 3} and t]
+    want_toc = toc and len(sections) >= 2
+    source = markdown_to_typst_source(
+        prepared,
+        title=title,
+        theme=theme,
+        toc=want_toc,
+        pdf_preview=is_pdf_preview_markdown(md_text),
+    )
+    tmp = md_dir / f".doc2md_print_{output_pdf.stem}.typ"
+    try:
+        tmp.write_text(source, encoding="utf-8")
+        compile_typst(tmp, output_pdf, root=md_dir)
+    except TypstError as e:
+        raise MdPdfError(str(e)) from e
+    except Exception as e:
+        raise MdPdfError(f"Typst compile failed: {e}") from e
+    finally:
+        tmp.unlink(missing_ok=True)
+    if not output_pdf.is_file() or output_pdf.stat().st_size < 100:
+        raise MdPdfError("Typst produced an empty PDF.")
+    return source
+
+
 def markdown_file_to_pdf(
     md_path: Path,
     output_pdf: Path | None = None,
     *,
     keep_ocr: bool = False,
     toc: bool = True,
+    engine: str = "chrome",
+    theme: str = "default",
 ) -> dict:
     src = md_path.expanduser().resolve()
     if not src.is_file():
@@ -436,24 +527,63 @@ def markdown_file_to_pdf(
         raise MdPdfError(f"Expected a .md file, got: {src}")
     dest = (output_pdf or default_pdf_output(src)).expanduser().resolve()
     text = src.read_text(encoding="utf-8")
-    html = build_print_html(text, src, keep_ocr=keep_ocr, toc=toc)
-    render_pdf_with_chrome(html, dest, md_dir=src.parent)
+    engine_key = (engine or "chrome").strip().lower()
+    theme_key = (theme or "default").strip().lower()
+    try:
+        theme_tokens(theme_key)
+    except TypstError as e:
+        raise MdPdfError(str(e)) from e
+
+    if engine_key == "chrome":
+        html = build_print_html(
+            text, src, keep_ocr=keep_ocr, toc=toc, theme=theme_key
+        )
+        render_pdf_with_chrome(html, dest, md_dir=src.parent, theme=theme_key)
+        used_toc = '<div class="toc">' in html
+    elif engine_key == "typst":
+        html = ""
+        source = render_pdf_with_typst(
+            text,
+            src,
+            dest,
+            keep_ocr=keep_ocr,
+            toc=toc,
+            theme=theme_key,
+        )
+        used_toc = toc and not is_pdf_preview_markdown(text) and "#outline(" in source
+    else:
+        raise MdPdfError(f"Unknown engine: {engine!r} (use chrome or typst)")
+
     return {
         "input": str(src),
         "output": str(dest),
         "bytes": dest.stat().st_size,
         "pdf_preview": is_pdf_preview_markdown(text),
         "keep_ocr": keep_ocr,
-        "toc": '<div class="toc">' in html,
+        "toc": used_toc,
+        "engine": engine_key,
+        "theme": theme_key,
     }
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Convert local Markdown (+ *_assets/) to PDF via Chrome print."
+        description="Convert local Markdown (+ *_assets/) to PDF (Chrome default; Typst optional)."
     )
     parser.add_argument("input", help="Path to a .md file")
     parser.add_argument("-o", "--output", type=Path, default=None, help="Output .pdf path")
+    parser.add_argument(
+        "--engine",
+        choices=("chrome", "typst"),
+        default="chrome",
+        help="PDF engine. chrome is default; typst needs the Typst CLI (win/mac/linux) or pip wheel",
+    )
+    parser.add_argument(
+        "--theme",
+        choices=("default", "brand"),
+        default="default",
+        help="Layout theme. brand is navy/accent report styling (no logo)",
+    )
     parser.add_argument(
         "--keep-ocr",
         action="store_true",
@@ -472,6 +602,8 @@ def main(argv: list[str] | None = None) -> int:
             args.output,
             keep_ocr=args.keep_ocr,
             toc=not args.no_toc,
+            engine=args.engine,
+            theme=args.theme,
         )
     except MdPdfError as e:
         print(f"ERROR: {e}", file=sys.stderr)

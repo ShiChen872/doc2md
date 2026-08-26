@@ -29,7 +29,7 @@ Replace `<this-skill>` with the absolute path of this skill directory
 1. **Prefer the unified CLI** `doc2md.py` — it classifies local path vs WPS vs Feishu.
 2. If a WPS/Feishu session is missing or expired, conversion **opens Chrome** for the user to log in, then continues. Pass `--no-login` to skip (CI / non-interactive).
 3. After conversion, report image counts and confirm `*_assets/` beside the `.md`.
-4. **PDF is optional.** Only if the user asks to export PDF, run `md_to_pdf.py` on the `.md`. Do not emit PDF by default.
+4. **PDF is optional.** Only if the user asks to export PDF, run `md_to_pdf.py` on the `.md`. Do not emit PDF by default. Chrome is the default engine; if they ask for 品牌样式 / 更好排版 / Typst, add `--engine typst --theme brand`.
 
 ### Do not improvise (especially Comate)
 
@@ -85,6 +85,8 @@ Session files (platform-agnostic):
 
 **WPS PDF notes:** when original PDF download is denied, the CLI screenshots each web-viewer page (`.pdf-page`) into `*_assets/page_NNN.png` and OCRs the tiles. Page images are the source of truth; OCR is for search.
 
+**WPS presentation notes:** `.pptx` link shares often return `ErrForbidDownloadLinkFile`. The CLI opens the web viewer (`office_type=p`) and screenshots each `.slide-uil-view` slide. Knowledge-wiki URLs (`365.kdocs.cn/wiki/l/0l…`) are the same files; the inner share id is used. Do not use WPS `file-content` reading-mode markdown for decks — that is text-only.
+
 ### Markdown → PDF (optional)
 
 Only when the user asks for PDF. Markdown stays the source of truth.
@@ -93,9 +95,23 @@ Only when the user asks for PDF. Markdown stays the source of truth.
 ~/.config/doc2md/venv/bin/python <this-skill>/scripts/md_to_pdf.py /path/to/out.md -o /path/to/out.pdf
 ```
 
-Uses system Chrome print (Playwright `channel=chrome`). Adds a **目录** from h2/h3, a header title, and page numbers. Local `*_assets/` images are resolved; `<video>` / iframe become links. WPS PDF-preview exports print **page images only** (OCR stays in the `.md` for search; pass `--keep-ocr` to include a tiny gray OCR block) and skip the TOC so “第 N 页” is not treated as an outline. `--no-toc` skips the table of contents.
+Default engine is **Chrome print** (`--engine chrome`). Adds a **目录** from h2/h3, a header title, and page numbers. Local `*_assets/` images are resolved; `<video>` / iframe become links. WPS PDF-preview exports print **page images only** (OCR stays in the `.md` for search; pass `--keep-ocr` to include a tiny gray OCR block) and skip the TOC so “第 N 页” is not treated as an outline. `--no-toc` skips the table of contents.
 
-Do **not** call WPS `convert/to/pdf` or automate the WPS client. If Chrome print is not available, tell the user they can open the `.md` in WPS and 另存为 PDF (manual GUI, not a CLI engine).
+If the user asks for **更好排版 / 品牌样式 / Typst**, use:
+
+```bash
+~/.config/doc2md/venv/bin/python <this-skill>/scripts/md_to_pdf.py /path/to/out.md -o /path/to/out.pdf --engine typst --theme brand
+```
+
+Needs the **Typst CLI** on PATH, or `pip install typst` when a wheel exists. Typst is cross-platform (macOS / Windows / Linux), not macOS-only:
+
+- macOS: `brew install typst`
+- Windows: `winget install --id Typst.Typst -e`（也可用 `scoop install typst`，或从 [GitHub Releases](https://github.com/typst/typst/releases) 解压 `typst-x86_64-pc-windows-msvc.zip` 并把 `typst.exe` 加到 PATH）
+- Linux: 同上 Releases 里的 linux 包
+
+Do not silently fall back to Chrome if Typst was requested. `--theme brand` is navy/accent report styling with no logo artwork. `--theme brand` also works with Chrome. Windows 上没装 Typst 时，继续用默认 `--engine chrome` 即可。
+
+Do **not** call WPS `convert/to/pdf` or automate the WPS client. If Chrome print is not available and Typst was not requested, tell the user they can open the `.md` in WPS and 另存为 PDF (manual GUI, not a CLI engine).
 
 ### Feishu / Lark share link
 
@@ -116,12 +132,12 @@ Session: `~/.config/doc2md/feishu_storage_state.json` (and `feishu_cookie.txt` b
 | `doc2md.py` | **Unified CLI** — classify path/URL then convert |
 | `convert.py` | Local Office/PDF/HTML/OTL-JSON → Markdown |
 | `wps_login.py` | Headed Chrome login, save session |
-| `wps_to_md.py` | WPS share URL → Markdown (Office / OTL / media / PDF preview) |
+| `wps_to_md.py` | WPS share URL → Markdown (Office / OTL / media / PDF preview / 演示文稿幻灯片截图) |
 | `wps_download.py` | Share URL → raw file / `.otl.json` only |
 | `otl_to_md.py` | OTL JSON → Markdown |
 | `feishu_login.py` | Headed Chrome login for Feishu/Lark |
 | `feishu_to_md.py` | Feishu wiki/docx URL → Markdown |
-| `md_to_pdf.py` | Local Markdown (+ assets) → PDF (Chrome print; 目录/页眉/页码; optional) |
+| `md_to_pdf.py` | Local Markdown (+ assets) → PDF (Chrome default; optional `--engine typst --theme brand`) |
 
 ## Image handling
 
@@ -149,4 +165,4 @@ Session: `~/.config/doc2md/feishu_storage_state.json` (and `feishu_cookie.txt` b
 
 ## Supported formats
 
-markitdown formats (docx, pptx, xlsx, pdf, html, epub, …) + WPS share links (365 / `.otl` / `plus.wps.cn` media) + Feishu/Lark wiki & docx links. Optional: local Markdown → PDF via `md_to_pdf.py`.
+markitdown formats (docx, pptx, xlsx, pdf, html, epub, …) + WPS share links (365 / `.otl` / `plus.wps.cn` media) + Feishu/Lark wiki & docx links. Optional: local Markdown → PDF via `md_to_pdf.py` (Chrome default; Typst brand theme optional).

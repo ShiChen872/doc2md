@@ -11,7 +11,7 @@ Works with Cursor (desktop or CLI), Codex, and other Agent Skills–compatible h
 - **PDF**: text via markitdown + embedded images via PyMuPDF; **scanned/image-only PDFs** auto-detected and OCR'd page-by-page
 - **Images** (png/jpg/…): keep original in `*_assets/` + OCR via [RapidOCR](https://github.com/RapidAI/RapidOCR) (`rapidocr-onnxruntime`; tesseract fallback)
 - Cloud: `kdocs.cn` / `365.kdocs.cn` / `plus.wps.cn` share links; `feishu.cn` / `larksuite.com` wiki & docx
-- WPS intelligent docs (`.otl`): parse `open/otl` JSON; tables rendered as Markdown tables (including images in cells)
+- WPS intelligent docs (`.otl`): parse `open/otl` JSON; tables rendered as Markdown tables (including images in cells); nested file cards become Markdown links
 - **WPS media** (`.mp4` / `view/media/l/`): Markdown card + cover; optional local `preview.mp4` via ffmpeg HLS remux when original download is denied
 - **WPS PDF shares**: if original download is denied, screenshot web-viewer pages (`page_NNN.png`) + OCR
 - **Markdown → PDF** (optional): `md_to_pdf.py` prints a local `.md` via Chrome (目录 / 页眉 / 页码); WPS Save As PDF is a manual fallback

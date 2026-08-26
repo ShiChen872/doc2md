@@ -123,6 +123,99 @@ def test_table_escapes_pipes_in_cells():
     assert r"a\|b" in md
 
 
+def test_wps_document_card_becomes_link():
+    raw = _doc(
+        _para("相关案例："),
+        {
+            "type": "WPSDocument",
+            "attrs": {
+                "viewType": "titleView",
+                "wpsDocumentId": "517223200561",
+                "wpsDocumentLink": "https://365.kdocs.cn/l/crbp7aGFHPwr?from=koa",
+                "wpsDocumentName": "民企案例丨长江存储：IM是半导体的核心业务系统？.otl",
+                "wpsDocumentType": "otl",
+            },
+        },
+    )
+    md = otl.otl_to_markdown(raw)
+    assert "相关案例：" in md
+    assert "<!-- WPS nested document (otl) -->" in md
+    assert (
+        "[民企案例丨长江存储：IM是半导体的核心业务系统？.otl]"
+        "(https://365.kdocs.cn/l/crbp7aGFHPwr?from=koa)"
+    ) in md
+    pptx = otl.otl_to_markdown(
+        _doc(
+            {
+                "type": "WPSDocument",
+                "attrs": {
+                    "wpsDocumentLink": "https://365.kdocs.cn/l/cuI2GFFvd1sr",
+                    "wpsDocumentName": "架构.pptx",
+                    "wpsDocumentType": "pptx",
+                },
+            }
+        )
+    )
+    assert "<!-- WPS nested document (pptx) -->" in pptx
+    assert "[架构.pptx](https://365.kdocs.cn/l/cuI2GFFvd1sr)" in pptx
+    named = otl.otl_to_markdown(
+        _doc({"type": "WPSDocument", "attrs": {"wpsDocumentName": "仅标题.otl"}})
+    )
+    assert "仅标题.otl" in named
+    assert "](" not in named
+    empty = otl.otl_to_markdown(_doc({"type": "WPSDocument", "attrs": {}}))
+    assert "nested document" not in empty
+
+
+def test_wps_document_card_inline_in_list_paragraph():
+    raw = _doc(
+        {
+            "type": "paragraph",
+            "attrs": {"listType": "bullet"},
+            "content": [
+                {"type": "text", "text": "长江存储一期案例", "marks": [{"type": "bold"}]},
+                {"type": "text", "text": "："},
+                {
+                    "type": "WPSDocument",
+                    "attrs": {
+                        "wpsDocumentLink": "https://365.kdocs.cn/l/crbp7aGFHPwr?from=koa",
+                        "wpsDocumentName": "民企案例丨长江存储：IM是半导体的核心业务系统？.otl",
+                        "wpsDocumentType": "otl",
+                    },
+                },
+            ],
+        }
+    )
+    md = otl.otl_to_markdown(raw)
+    assert md.strip().startswith("- **长江存储一期案例**：")
+    assert "： [民企案例丨长江存储：IM是半导体的核心业务系统？.otl]" in md
+    assert "(https://365.kdocs.cn/l/crbp7aGFHPwr?from=koa)" in md
+
+
+def test_wps_document_card_in_table_cell():
+    cell = {
+        "type": "outline-table-cell",
+        "content": [
+            {
+                "type": "WPSDocument",
+                "attrs": {
+                    "wpsDocumentName": "子文档.otl",
+                    "wpsDocumentLink": "https://365.kdocs.cn/l/abc",
+                    "wpsDocumentType": "otl",
+                },
+            }
+        ],
+    }
+    raw = _doc(
+        {
+            "type": "outline-table",
+            "content": [{"type": "outline-table-row", "content": [cell]}],
+        }
+    )
+    md = otl.otl_to_markdown(raw)
+    assert "[子文档.otl](https://365.kdocs.cn/l/abc)" in md
+
+
 def test_horizontal_rule():
     raw = _doc({"type": "horizontal_rule"})
     md = otl.otl_to_markdown(raw)

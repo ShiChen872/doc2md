@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.4.8
+
+- OTL nested file cards (`WPSDocument`) emit as Markdown links instead of being dropped (block, inline, and table cells). Nested files are not recursively converted.
+
 ## v0.4.7
 
 - `md_to_pdf.py`: table of contents from h2/h3, header title, and page numbers (Chrome print; `--no-toc` to skip). PDF-preview Markdown skips TOC so slide pages are not listed as outline entries.

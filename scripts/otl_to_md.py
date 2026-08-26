@@ -89,6 +89,10 @@ def render_inline(node: dict) -> str:
     if node.get("type") == "emoji":
         attrs = node.get("attrs") if isinstance(node.get("attrs"), dict) else {}
         return str(attrs.get("emoji") or "")
+    if node.get("type") == "WPSDocument":
+        attrs = node.get("attrs") if isinstance(node.get("attrs"), dict) else {}
+        link = wps_document_link_md(attrs)
+        return f" {link}" if link else ""
     return "".join(
         render_inline(c) for c in (node.get("content") or []) if isinstance(c, dict)
     )
@@ -109,6 +113,20 @@ def _resolve_image_name(
     if 0 <= emit_index < len(image_names):
         return image_names[emit_index] or ""
     return ""
+
+
+def wps_document_link_md(attrs: dict | None) -> str:
+    """Markdown link (or plain title) for a WPSDocument card. Not inlined."""
+    if not isinstance(attrs, dict):
+        attrs = {}
+    name = str(attrs.get("wpsDocumentName") or "").strip()
+    href = str(attrs.get("wpsDocumentLink") or attrs.get("href") or "").strip()
+    if not name and not href:
+        return ""
+    label = (name or href).replace("[", "\\[").replace("]", "\\]")
+    if href:
+        return f"[{label}]({href})"
+    return label
 
 
 def _picture_markdown(
@@ -149,6 +167,11 @@ def _collect_cell_md(
                 parts.append(render_inline(n))
                 return
             if t == "outline-table":
+                return
+            if t == "WPSDocument":
+                md = wps_document_link_md(attrs)
+                if md:
+                    parts.append(md.replace("|", "\\|"))
                 return
             if t == "picture":
                 pic_i["n"] += 1
@@ -211,6 +234,15 @@ def otl_to_markdown(
         if t == "outline-title":
             if inline:
                 lines.append(f"# {inline}")
+                lines.append("")
+            return
+
+        if t == "WPSDocument":
+            link = wps_document_link_md(attrs)
+            if link:
+                dtype = str(attrs.get("wpsDocumentType") or "file").strip() or "file"
+                lines.append(f"<!-- WPS nested document ({dtype}) -->")
+                lines.append(link)
                 lines.append("")
             return
 

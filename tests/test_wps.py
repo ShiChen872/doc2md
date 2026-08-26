@@ -51,6 +51,23 @@ def test_is_presentation_share():
     assert not wtm.is_presentation_share("notes.otl", office_type="s")
 
 
+def test_clean_dbsheet_name():
+    assert wtm._clean_dbsheet_name("📚\n项目管理") == "项目管理"
+    assert wtm._clean_dbsheet_name("仪表盘") == "仪表盘"
+    assert wtm._clean_dbsheet_name("📙") == "📙"
+
+
+def test_is_ksheet_and_dbsheet_share():
+    assert wtm.is_ksheet_share("评估.ksheet")
+    assert wtm.is_ksheet_share("x", office_type="k")
+    assert not wtm.is_ksheet_share("评估.dbt")
+    assert wtm.is_dbsheet_share("项目管理.dbt")
+    assert wtm.is_dbsheet_share("x", office_type="d")
+    assert not wtm.is_dbsheet_share("评估.ksheet")
+    assert not wtm.is_dbsheet_share("notes.otl", office_type="o")
+    assert "view-item" in wtm.DB_SHEET_ITEM_SEL
+
+
 def test_is_media_filename():
     assert wtm.is_media_filename("comate-产品介绍.mp4")
     assert wtm.is_media_filename("a.MOV")
@@ -97,6 +114,18 @@ def test_build_pdf_preview_markdown():
     assert "![](竞对策略_assets/page_001.png)" in md
     assert "封面文字" in md
     assert "## 第 2 页" in md
+    db = wtm.build_pdf_preview_markdown(
+        title="项目管理",
+        source_url="https://365.kdocs.cn/l/ck9GLthdyAjb",
+        pages=[("pm_assets/page_001.png", "风险 P0"), ("pm_assets/page_002.png", "")],
+        kind="dbsheet",
+        headings=["风险及策略", "仪表盘"],
+    )
+    assert "多维表" in db
+    assert "网页预览分页截图" in db
+    assert "## 风险及策略" in db
+    assert "## 仪表盘" in db
+    assert "风险 P0" in db
 
 
 def test_build_media_markdown_includes_cover_and_stream():

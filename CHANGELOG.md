@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.4.12
+
+- WPS dbsheet (`.dbt`, `office_type=d`): original download is `notAllowType`; screenshot each web-viewer sheet **and nested view** (grid / form / dashboard), clipping the main pane. `.ksheet` already downloads as xlsx-compatible zip.
+
 ## v0.4.11
 
 - Optional `--recursive` / `--max-depth` for WPS OTL nested file cards: convert unique child shares into `{stem}_nested/*.md` and rewrite parent links. Default remains links only (`max-depth 0`). One child failure does not fail the parent; share-id cycles are skipped.

@@ -14,8 +14,9 @@ Flow:
   3. Try binary download (Office files)
   4. If blocked PDF: screenshot web-viewer `.pdf-page` tiles + OCR → Markdown
   5. If blocked presentation (`.pptx` / office_type=p): screenshot each slide
-  6. If blocked / .otl intelligent doc: capture open/otl JSON + CDN images → Markdown
-  7. Otherwise run convert.py on the downloaded Office file
+  6. If blocked / `.otl` intelligent doc: capture open/otl JSON + CDN images → Markdown
+  7. If `.dbt` / office_type=d (download notAllowType): screenshot each web-viewer sheet
+  8. Otherwise run convert.py on the downloaded Office file (`.ksheet` is xlsx-compatible)
 """
 
 from __future__ import annotations
@@ -57,6 +58,14 @@ MAX_PDF_PREVIEW_PAGES = 200
 WPP_SLIDE_SEL = ".slide-uil-view"
 PPT_EXTS = {".ppt", ".pptx", ".pptm", ".pps", ".ppsx"}
 MAX_WPP_PREVIEW_PAGES = 200
+DB_SHEET_ITEM_SEL = ".sheet-panel-items .sheet-panel-item, .ks-component-panel-item.view-item"
+DB_VIEW_SEL = (
+    ".workbench-main-content, .workbench-view-content, "
+    ".div_et_grid, .grid-view, .db-grid-view-wrapper, .workbench-content.main"
+)
+MAX_DBSHEET_SHEETS = 40
+KSHEET_EXTS = {".ksheet"}
+DBSHEET_EXTS = {".dbt", ".dbsheet"}
 
 
 class WpsError(Exception):
@@ -87,6 +96,18 @@ def is_presentation_share(fname: str = "", office_type: str = "") -> bool:
     if Path(fname or "").suffix.lower() in PPT_EXTS:
         return True
     return str(office_type or "").lower() in {"p", "wpp", "presentation"}
+
+
+def is_ksheet_share(fname: str = "", office_type: str = "") -> bool:
+    if Path(fname or "").suffix.lower() in KSHEET_EXTS:
+        return True
+    return str(office_type or "").lower() in {"k", "ksheet"}
+
+
+def is_dbsheet_share(fname: str = "", office_type: str = "") -> bool:
+    if Path(fname or "").suffix.lower() in DBSHEET_EXTS:
+        return True
+    return str(office_type or "").lower() in {"d", "db", "dbt", "dbsheet"}
 
 
 def is_media_filename(fname: str) -> bool:
@@ -290,10 +311,13 @@ def build_pdf_preview_markdown(
     source_url: str,
     pages: list[tuple[str, str]],
     kind: str = "pdf",
+    headings: list[str] | None = None,
 ) -> str:
     """Markdown for a WPS PDF / presentation share captured from the web viewer."""
     if kind == "presentation":
         type_line = "> 类型: WPS 演示文稿分享（网页预览分页截图；分享禁止原文件下载）"
+    elif kind == "dbsheet":
+        type_line = "> 类型: WPS 多维表分享（网页预览分页截图；按左侧视图截图，原文件类型不允许下载）"
     else:
         type_line = "> 类型: WPS PDF 分享（网页预览分页截图 + OCR）"
     lines = [
@@ -304,7 +328,13 @@ def build_pdf_preview_markdown(
         "",
     ]
     for i, (rel, ocr) in enumerate(pages, 1):
-        lines.append(f"## 第 {i} 页")
+        if kind == "dbsheet":
+            heading = ""
+            if headings and i - 1 < len(headings):
+                heading = str(headings[i - 1] or "").strip()
+            lines.append(f"## {heading or f'视图 {i}'}")
+        else:
+            lines.append(f"## 第 {i} 页")
         lines.append("")
         lines.append(f"![]({rel})")
         lines.append("")
@@ -865,6 +895,184 @@ def capture_wpp_preview_pages(page, assets_dir: Path) -> list[Path]:
     return saved
 
 
+def _clean_dbsheet_name(text: str) -> str:
+    lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
+    for line in reversed(lines):
+        letters = re.sub(r"[^\w\u4e00-\u9fff]+", "", line, flags=re.UNICODE)
+        if len(letters) >= 2:
+            return line[:80]
+    return (lines[-1] if lines else "")[:80]
+
+
+def _dbsheet_sheet_items(page) -> list[tuple[int, str, str]]:
+    loc = page.locator(DB_SHEET_ITEM_SEL)
+    items: list[tuple[int, str, str]] = []
+    try:
+        count = loc.count()
+    except Exception:
+        return items
+    for i in range(count):
+        el = loc.nth(i)
+        try:
+            box = el.bounding_box()
+        except Exception:
+            box = None
+        if not box or box.get("height", 0) < 8 or box.get("width", 0) < 8:
+            continue
+        try:
+            content = el.locator(
+                ".sheet-panel-item-content, .view-item-content, .sheet-item-name-wrapper"
+            ).first
+            raw = content.inner_text(timeout=1000) if content.count() else el.inner_text()
+        except Exception:
+            raw = ""
+        name = _clean_dbsheet_name(raw)
+        cls = ""
+        try:
+            cls = str(el.get_attribute("class") or "")
+        except Exception:
+            cls = ""
+        if "disabled" in cls or "db-hollow-guide" in cls:
+            continue
+        kind = "view" if "view-item" in cls else "sheet"
+        items.append((i, name, kind))
+    return items
+
+
+DBSHEET_VIEW_PARENT_JS = """el => {
+  let p = el.previousElementSibling;
+  while (p) {
+    const cls = (p.className || '').toString();
+    if (cls.includes('et-status-sheet-item')) {
+      const n = p.querySelector('.sheet-item-name-wrapper, .sheet-panel-item-content');
+      return (n && n.innerText) || p.innerText || '';
+    }
+    p = p.previousElementSibling;
+  }
+  return '';
+}"""
+
+
+def _dbsheet_view_parent(el) -> str:
+    try:
+        return _clean_dbsheet_name(el.evaluate(DBSHEET_VIEW_PARENT_JS) or "")
+    except Exception:
+        return ""
+
+
+def _dbsheet_clip(page) -> dict | None:
+    """Viewport clip of the main view, excluding the left sheet rail."""
+    try:
+        box = page.evaluate(
+            """() => {
+              const panel = document.querySelector('.sheet-panel');
+              const main = document.querySelector('.workbench-main-content')
+                || document.querySelector('.workbench-view-content')
+                || document.querySelector('.div_et_grid')
+                || document.querySelector('.grid-view')
+                || document.querySelector('.db-grid-view-wrapper')
+                || document.querySelector('.workbench-content.main')
+                || document.querySelector('.workbench-content');
+              if (!main) return null;
+              const r = main.getBoundingClientRect();
+              const left = panel ? Math.max(r.left, panel.getBoundingClientRect().right) : r.left;
+              const x = Math.max(0, Math.floor(left));
+              const y = Math.max(0, Math.floor(r.top));
+              const width = Math.floor(r.right - x);
+              const height = Math.floor(r.bottom - y);
+              if (width < 80 || height < 80) return null;
+              return {x, y, width, height};
+            }"""
+        )
+    except Exception:
+        return None
+    if not isinstance(box, dict):
+        return None
+    return box
+
+
+def capture_dbsheet_preview_pages(page, assets_dir: Path) -> list[tuple[Path, str]]:
+    """Screenshot each visible dbsheet / dashboard view (download notAllowType)."""
+    try:
+        page.set_viewport_size({"width": 1600, "height": 1000})
+    except Exception:
+        pass
+    try:
+        page.wait_for_selector(f"{DB_VIEW_SEL}, {DB_SHEET_ITEM_SEL}", timeout=25000)
+    except Exception:
+        return []
+    page.wait_for_timeout(800)
+    items = _dbsheet_sheet_items(page)
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    for old in assets_dir.glob("page_*.png"):
+        old.unlink()
+
+    def _shot(dest: Path) -> bool:
+        clip = _dbsheet_clip(page)
+        try:
+            if clip:
+                page.screenshot(path=str(dest), clip=clip)
+            else:
+                view = page.locator(DB_VIEW_SEL).first
+                if view.count() > 0:
+                    view.screenshot(path=str(dest))
+                else:
+                    page.screenshot(path=str(dest))
+        except Exception:
+            return False
+        return dest.is_file() and dest.stat().st_size >= 500
+
+    saved: list[tuple[Path, str]] = []
+    seen: set[str] = set()
+    if not items:
+        dest = assets_dir / "page_001.png"
+        if _shot(dest):
+            return [(dest, "当前视图")]
+        dest.unlink(missing_ok=True)
+        return []
+
+    clicked: set[str] = set()
+    n = 0
+    while n < MAX_DBSHEET_SHEETS:
+        loc = page.locator(DB_SHEET_ITEM_SEL)
+        pending = []
+        for idx, name, kind in _dbsheet_sheet_items(page):
+            parent_name = _dbsheet_view_parent(loc.nth(idx)) if kind == "view" else ""
+            key = f"{kind}:{parent_name}:{name or idx}"
+            if key not in clicked:
+                pending.append((idx, name, kind, key, parent_name))
+        if not pending:
+            break
+        idx, name, kind, key, parent_name = pending[0]
+        clicked.add(key)
+        try:
+            page.keyboard.press("Escape")
+        except Exception:
+            pass
+        try:
+            loc.nth(idx).click(timeout=5000, force=True)
+        except Exception:
+            continue
+        page.wait_for_timeout(1600)
+        n += 1
+        dest = assets_dir / f"page_{n:03d}.png"
+        if not _shot(dest):
+            dest.unlink(missing_ok=True)
+            n -= 1
+            continue
+        digest = hashlib.sha256(dest.read_bytes()).hexdigest()
+        if digest in seen and kind == "view":
+            dest.unlink(missing_ok=True)
+            n -= 1
+            continue
+        seen.add(digest)
+        label = name
+        if kind == "view" and parent_name and name:
+            label = f"{parent_name} / {name}"
+        saved.append((dest, label or f"视图 {len(saved) + 1}"))
+    return saved
+
+
 def write_pdf_preview_markdown(
     *,
     title: str,
@@ -873,6 +1081,7 @@ def write_pdf_preview_markdown(
     page_files: list[Path],
     kind: str = "pdf",
     ocr: bool = True,
+    headings: list[str] | None = None,
 ) -> dict:
     from convert import ocr_image_text
 
@@ -887,7 +1096,11 @@ def write_pdf_preview_markdown(
             engines.add(engine)
         pages.append((rel, text))
     md = build_pdf_preview_markdown(
-        title=title, source_url=source_url, pages=pages, kind=kind
+        title=title,
+        source_url=source_url,
+        pages=pages,
+        kind=kind,
+        headings=headings,
     )
     output_md.parent.mkdir(parents=True, exist_ok=True)
     output_md.write_text(md, encoding="utf-8")
@@ -1178,6 +1391,7 @@ def _share_to_markdown_once(
         is_media = is_media_filename(fname) or "/view/media/" in url.lower()
         is_pdf = is_pdf_share(fname, ftype=ftype)
         is_wpp = is_presentation_share(fname)
+        is_dbt = is_dbsheet_share(fname)
 
         # --- media / video share: Markdown card + cover (no Office body) ---
         if is_media and file_id and group_id:
@@ -1454,6 +1668,9 @@ def _share_to_markdown_once(
                 is_wpp = is_wpp or is_presentation_share(
                     fname, office_type=str(env.get("office_type") or "")
                 )
+                is_dbt = is_dbt or is_dbsheet_share(
+                    fname, office_type=str(env.get("office_type") or "")
+                )
         except Exception:
             pass
 
@@ -1526,6 +1743,54 @@ def _share_to_markdown_once(
             result["assets_dir"] = stats.get("assets_dir")
             result["markdown_chars"] = stats.get("markdown_chars")
             return result
+
+        # Dbsheet shares deny original download (notAllowType); screenshot each view.
+        dbt_ready = False
+        if is_dbt:
+            try:
+                page.wait_for_selector(
+                    f"{DB_VIEW_SEL}, {DB_SHEET_ITEM_SEL}", timeout=15000
+                )
+                dbt_ready = True
+            except Exception:
+                dbt_ready = False
+        if dbt_ready:
+            stem = safe_stem(Path(fname).stem if fname else sid)
+            if output_md.name in {"out.md", "output.md"} or output_md.stem == "wps_out":
+                output_md = output_md.with_name(f"{stem}.md")
+                result["output"] = str(output_md)
+            assets_dir = output_md.parent / f"{output_md.stem}_assets"
+            captured = capture_dbsheet_preview_pages(page, assets_dir)
+            browser.close()
+            if not captured:
+                raise WpsError(
+                    "Could not capture dbsheet views. "
+                    "Re-run wps_login.py, or export from the WPS UI and run convert.py."
+                )
+            page_files = [p for p, _ in captured]
+            headings = [name for _, name in captured]
+            stats = write_pdf_preview_markdown(
+                title=Path(fname).stem or stem,
+                source_url=url,
+                output_md=output_md,
+                page_files=page_files,
+                kind="dbsheet",
+                headings=headings,
+            )
+            result["mode"] = "dbt-preview"
+            result["convert"] = stats
+            result["pages"] = stats.get("pages")
+            result["views"] = headings
+            result["assets_dir"] = stats.get("assets_dir")
+            result["markdown_chars"] = stats.get("markdown_chars")
+            return result
+
+        if is_dbt:
+            browser.close()
+            raise WpsError(
+                "Could not load the dbsheet web viewer. "
+                "Re-run wps_login.py, or export from the WPS UI and run convert.py."
+            )
 
         # OTL path: scroll to lazy-load CDN images / shapes.
         try:

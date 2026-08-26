@@ -92,6 +92,8 @@ Session files (platform-agnostic):
 
 **WPS presentation notes:** `.pptx` link shares often return `ErrForbidDownloadLinkFile`. The CLI opens the web viewer (`office_type=p`) and screenshots each `.slide-uil-view` slide. Knowledge-wiki URLs (`365.kdocs.cn/wiki/l/0l…`) are the same files; the inner share id is used. Do not use WPS `file-content` reading-mode markdown for decks — that is text-only.
 
+**WPS ksheet / dbsheet notes:** `.ksheet` (金山在线表格, `office_type=k`) downloads as an xlsx-compatible zip and becomes Markdown tables. `.dbt` 多维表 (`office_type=d`) cannot be downloaded (`notAllowType`); the CLI screenshots each left-rail sheet and nested view (grid / form / dashboard), clipping the main pane. That is the visible viewer, not a full record dump. 画板 / 脑图 and Feishu bitable / 画板 still have no dedicated branch.
+
 ### Markdown → PDF (optional)
 
 Only when the user asks for PDF. Markdown stays the source of truth.
@@ -137,7 +139,7 @@ Session: `~/.config/doc2md/feishu_storage_state.json` (and `feishu_cookie.txt` b
 | `doc2md.py` | **Unified CLI** — classify path/URL then convert |
 | `convert.py` | Local Office/PDF/HTML/OTL-JSON → Markdown |
 | `wps_login.py` | Headed Chrome login, save session |
-| `wps_to_md.py` | WPS share URL → Markdown (Office / OTL / media / PDF preview / 演示文稿幻灯片截图) |
+| `wps_to_md.py` | WPS share URL → Markdown (Office / OTL / media / PDF preview / 演示文稿幻灯片截图 / 多维表视图截图) |
 | `wps_download.py` | Share URL → raw file / `.otl.json` only |
 | `otl_to_md.py` | OTL JSON → Markdown |
 | `feishu_login.py` | Headed Chrome login for Feishu/Lark |
@@ -160,7 +162,7 @@ Session: `~/.config/doc2md/feishu_storage_state.json` (and `feishu_cookie.txt` b
 2. If still failing (password-protected link, rate limit, unsupported type): ask user to export/download in the product UI, then `convert.py` on the local file.
 3. Do not invent credentials or scrape login forms — only open a browser for the user to log in themselves.
 4. Do not fall back to host WPS APIs, AppleScript, Chrome “JavaScript from Apple Events”, or WPS `convert/to/pdf`.
-5. Feishu: code fences keep language (numeric CodeLanguage mapped); file attachments download when present; bitable / sheet / mindnote are skipped with an HTML comment; legacy `/docs/` may need upgrade to new docx.
+5. Feishu: code fences keep language (numeric CodeLanguage mapped); file attachments download when present; bitable / sheet / mindnote / board are still skipped with an HTML comment; legacy `/docs/` may need upgrade to new docx. WPS `.dbt` is handled by `wps_to_md` (view screenshots), not this Feishu skip list.
 
 ## Portability
 

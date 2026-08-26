@@ -216,6 +216,68 @@ def test_wps_document_card_in_table_cell():
     assert "[子文档.otl](https://365.kdocs.cn/l/abc)" in md
 
 
+def test_iter_wps_document_cards_unique_and_skips_empty():
+    raw = _doc(
+        {
+            "type": "WPSDocument",
+            "attrs": {
+                "wpsDocumentName": "一.otl",
+                "wpsDocumentLink": "https://www.kdocs.cn/l/aaa111?from=koa",
+                "wpsDocumentType": "otl",
+            },
+        },
+        {
+            "type": "paragraph",
+            "content": [
+                {
+                    "type": "WPSDocument",
+                    "attrs": {
+                        "wpsDocumentName": "一（重复）.otl",
+                        "wpsDocumentLink": "https://365.kdocs.cn/l/aaa111",
+                        "wpsDocumentType": "otl",
+                    },
+                }
+            ],
+        },
+        {
+            "type": "outline-table",
+            "content": [
+                {
+                    "type": "outline-table-row",
+                    "content": [
+                        {
+                            "type": "outline-table-cell",
+                            "content": [
+                                {
+                                    "type": "WPSDocument",
+                                    "attrs": {
+                                        "wpsDocumentName": "表内.pptx",
+                                        "wpsDocumentLink": "https://365.kdocs.cn/l/bbb222",
+                                        "wpsDocumentType": "pptx",
+                                    },
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ],
+        },
+        {"type": "WPSDocument", "attrs": {}},
+        {
+            "type": "WPSDocument",
+            "attrs": {"wpsDocumentName": "无链接.otl"},
+        },
+    )
+    cards = otl.iter_wps_document_cards(raw)
+    hrefs = [c["href"] for c in cards]
+    names = [c["name"] for c in cards]
+    assert hrefs.count("https://www.kdocs.cn/l/aaa111?from=koa") == 1
+    assert "https://365.kdocs.cn/l/bbb222" in hrefs
+    assert "无链接.otl" in names
+    assert all(c["name"] or c["href"] for c in cards)
+    assert len(cards) == 3
+
+
 def test_horizontal_rule():
     raw = _doc({"type": "horizontal_rule"})
     md = otl.otl_to_markdown(raw)

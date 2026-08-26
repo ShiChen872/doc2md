@@ -129,6 +129,51 @@ def wps_document_link_md(attrs: dict | None) -> str:
     return label
 
 
+def _wps_document_card_key(href: str, name: str) -> str:
+    if href:
+        m = re.search(
+            r"/(?:wiki/l|l|view/l|view/media/l)/([A-Za-z0-9_-]+)",
+            href,
+            re.I,
+        )
+        if m:
+            return m.group(1)
+        return href.split("?", 1)[0]
+    return f"name:{name}"
+
+
+def iter_wps_document_cards(raw: dict) -> list[dict]:
+    """Unique nested file cards (name / href / type), first occurrence wins."""
+    found: list[dict] = []
+    seen: set[str] = set()
+
+    def walk(node: object, depth: int = 0) -> None:
+        if depth > 80:
+            return
+        if isinstance(node, dict):
+            if node.get("type") == "WPSDocument":
+                attrs = node.get("attrs") if isinstance(node.get("attrs"), dict) else {}
+                href = str(attrs.get("wpsDocumentLink") or attrs.get("href") or "").strip()
+                name = str(attrs.get("wpsDocumentName") or "").strip()
+                dtype = str(attrs.get("wpsDocumentType") or "").strip()
+                if not href and not name:
+                    return
+                key = _wps_document_card_key(href, name)
+                if key not in seen:
+                    seen.add(key)
+                    found.append({"name": name, "href": href, "type": dtype})
+                return
+            for value in node.values():
+                walk(value, depth + 1)
+            return
+        if isinstance(node, list):
+            for item in node:
+                walk(item, depth + 1)
+
+    walk(raw.get("content") if isinstance(raw, dict) else raw)
+    return found
+
+
 def _picture_markdown(
     attrs: dict,
     *,

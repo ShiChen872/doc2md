@@ -270,7 +270,7 @@ def test_ensure_session_auto_login(tmp_path: Path, monkeypatch):
 def test_share_to_markdown_retries_after_expired_session(tmp_path: Path, monkeypatch):
     calls = {"n": 0, "login": 0}
 
-    def fake_once(url, output, *, auto_login=True):
+    def fake_once(url, output, *, auto_login=True, **kwargs):
         calls["n"] += 1
         if calls["n"] == 1:
             raise wtm._SessionExpired()
@@ -287,7 +287,7 @@ def test_share_to_markdown_retries_after_expired_session(tmp_path: Path, monkeyp
 
 
 def test_share_to_markdown_no_login_does_not_prompt(tmp_path: Path, monkeypatch):
-    def fake_once(url, output, *, auto_login=True):
+    def fake_once(url, output, *, auto_login=True, **kwargs):
         raise wtm._SessionExpired()
 
     monkeypatch.setattr(wtm, "_share_to_markdown_once", fake_once)
@@ -341,3 +341,117 @@ def test_ext_from_shape():
     assert wtm._ext_from_shape({"raw_ext": "jpeg"}, b"") == "jpg"
     assert wtm._ext_from_shape({}, b"\x89PNG\r\n\x1a\nxxxx") == "png"
     assert wtm._ext_from_shape({}, b"\xff\xd8\xff") == "jpg"
+
+
+def test_resolve_nested_depth():
+    assert wtm.resolve_nested_depth() == 0
+    assert wtm.resolve_nested_depth(recursive=True) == 1
+    assert wtm.resolve_nested_depth(recursive=True, max_depth=2) == 2
+    assert wtm.resolve_nested_depth(recursive=True, max_depth=0) == 0
+    try:
+        wtm.resolve_nested_depth(max_depth=-1)
+        raise AssertionError("expected ValueError")
+    except ValueError:
+        pass
+
+
+def test_rewrite_nested_share_links():
+    md = (
+        "> 来源: https://www.kdocs.cn/l/parentid\n\n"
+        "[SOP.otl](https://www.kdocs.cn/l/childaa?from=koa)\n"
+        "[评估.xlsx](https://365.kdocs.cn/l/childbb)\n"
+    )
+    out = wtm.rewrite_nested_share_links(
+        md,
+        {"childaa": "parent_nested/SOP.md", "childbb": "parent_nested/评估.md"},
+    )
+    assert "parent_nested/SOP.md" in out
+    assert "parent_nested/评估.md" in out
+    assert "https://www.kdocs.cn/l/parentid" in out
+    assert "kdocs.cn/l/childaa" not in out
+
+
+def test_expand_nested_otl_rewrites_success_keeps_failures(tmp_path: Path):
+    parent = tmp_path / "合集.md"
+    parent.write_text(
+        "[成功.otl](https://www.kdocs.cn/l/okchild1)\n"
+        "[失败.otl](https://365.kdocs.cn/l/badchild)\n"
+        "[自己.otl](https://www.kdocs.cn/l/parentid)\n",
+        encoding="utf-8",
+    )
+    raw = {
+        "content": {
+            "type": "doc",
+            "content": [
+                {
+                    "type": "WPSDocument",
+                    "attrs": {
+                        "wpsDocumentName": "成功.otl",
+                        "wpsDocumentLink": "https://www.kdocs.cn/l/okchild1",
+                        "wpsDocumentType": "otl",
+                    },
+                },
+                {
+                    "type": "WPSDocument",
+                    "attrs": {
+                        "wpsDocumentName": "失败.otl",
+                        "wpsDocumentLink": "https://365.kdocs.cn/l/badchild",
+                        "wpsDocumentType": "otl",
+                    },
+                },
+                {
+                    "type": "WPSDocument",
+                    "attrs": {
+                        "wpsDocumentName": "自己.otl",
+                        "wpsDocumentLink": "https://www.kdocs.cn/l/parentid",
+                        "wpsDocumentType": "otl",
+                    },
+                },
+            ],
+        }
+    }
+
+    def fake_convert(url, dest, **kwargs):
+        dest = Path(dest)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if "badchild" in url:
+            raise wtm.WpsError("denied")
+        dest.write_text(f"# from {url}\n", encoding="utf-8")
+        return {"mode": "otl", "output": str(dest)}
+
+    reports = wtm.expand_nested_otl_documents(
+        raw,
+        parent,
+        max_depth=1,
+        visited={"parentid"},
+        convert_child=fake_convert,
+    )
+    text = parent.read_text(encoding="utf-8")
+    assert "合集_nested/成功.md" in text
+    assert "https://365.kdocs.cn/l/badchild" in text
+    assert "https://www.kdocs.cn/l/parentid" in text
+    ok = [r for r in reports if r.get("ok")]
+    skipped = [r for r in reports if r.get("skipped") == "already visited"]
+    failed = [r for r in reports if not r.get("ok") and r.get("error")]
+    assert len(ok) == 1
+    assert len(skipped) == 1
+    assert len(failed) == 1
+
+
+def test_expand_nested_depth_zero_is_noop(tmp_path: Path):
+    parent = tmp_path / "p.md"
+    parent.write_text("[x](https://www.kdocs.cn/l/abc)\n", encoding="utf-8")
+    raw = {
+        "content": {
+            "type": "WPSDocument",
+            "attrs": {
+                "wpsDocumentName": "x.otl",
+                "wpsDocumentLink": "https://www.kdocs.cn/l/abc",
+            },
+        }
+    }
+    reports = wtm.expand_nested_otl_documents(
+        raw, parent, max_depth=0, visited=set(), convert_child=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("nope"))
+    )
+    assert reports == []
+    assert "https://www.kdocs.cn/l/abc" in parent.read_text(encoding="utf-8")

@@ -101,6 +101,10 @@ def _print_result(payload: object) -> None:
         if key == "convert" and isinstance(value, dict):
             for ck, cv in value.items():
                 print(f"convert.{ck}: {cv}")
+        elif key == "nested" and isinstance(value, list):
+            print(f"nested: {len(value)}")
+            for i, item in enumerate(value, 1):
+                print(f"nested.{i}: {item}")
         else:
             print(f"{key}: {value}")
 
@@ -116,11 +120,22 @@ def run_convert(raw: str, output: Path, *, assets_dir: Path | None = None) -> in
     return 0
 
 
-def run_wps(raw: str, output: Path, *, auto_login: bool = True) -> int:
+def run_wps(
+    raw: str,
+    output: Path,
+    *,
+    auto_login: bool = True,
+    max_depth: int = 0,
+) -> int:
     from wps_to_md import WpsError, normalize_url, share_to_markdown
 
     try:
-        result = share_to_markdown(normalize_url(raw), output, auto_login=auto_login)
+        result = share_to_markdown(
+            normalize_url(raw),
+            output,
+            auto_login=auto_login,
+            max_depth=max_depth,
+        )
     except WpsError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         if not auto_login:
@@ -180,6 +195,18 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Do not open Chrome if a WPS/Feishu session is missing or expired",
     )
+    parser.add_argument(
+        "--recursive",
+        action="store_true",
+        help="WPS OTL: convert nested file cards one level (same as --max-depth 1)",
+    )
+    parser.add_argument(
+        "--max-depth",
+        type=int,
+        default=None,
+        metavar="N",
+        help="WPS OTL nested conversion depth (0=links only; default 0, or 1 with --recursive)",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -196,7 +223,15 @@ def main(argv: list[str] | None = None) -> int:
             assets = args.assets_dir.expanduser().resolve() if args.assets_dir else None
             return run_convert(args.input, output, assets_dir=assets)
         if kind == "wps":
-            return run_wps(args.input, output, auto_login=not args.no_login)
+            from wps_to_md import resolve_nested_depth
+
+            depth = resolve_nested_depth(recursive=args.recursive, max_depth=args.max_depth)
+            return run_wps(
+                args.input,
+                output,
+                auto_login=not args.no_login,
+                max_depth=depth,
+            )
         return run_feishu(
             args.input,
             output,
@@ -204,6 +239,9 @@ def main(argv: list[str] | None = None) -> int:
             timeout_ms=args.timeout_ms,
             auto_login=not args.no_login,
         )
+    except ValueError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 1
     except Exception as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 1

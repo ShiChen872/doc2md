@@ -55,6 +55,8 @@ If the CLI fails, report its stderr. Do not ask the user to toggle Chrome Apple 
 
 Accepts: local Office/PDF/OTL-JSON; `kdocs.cn` / `365.kdocs.cn` / `plus.wps.cn` shares (including `view/media` video); Feishu/Lark `wiki` / `docx` URLs.
 
+WPS OTL nested cards stay as kdocs links unless the user asks to expand them (`--recursive`).
+
 ### Local file
 
 ```bash
@@ -71,6 +73,9 @@ Also accepts `.otl.json` (WPS intelligent-doc JSON).
 
 # Convert share link → Markdown (+ assets)
 ~/.config/doc2md/venv/bin/python <this-skill>/scripts/wps_to_md.py 'https://365.kdocs.cn/l/XXXX' -o /path/to/out.md
+
+# Optional: also convert nested OTL file cards (one level). Do not use by default.
+~/.config/doc2md/venv/bin/python <this-skill>/scripts/doc2md.py 'https://365.kdocs.cn/l/XXXX' -o /path/to/out.md --recursive
 
 # Media / video shares (plus.wps.cn/view/media/l/… or .mp4 share)
 ~/.config/doc2md/venv/bin/python <this-skill>/scripts/wps_to_md.py 'https://plus.wps.cn/view/media/l/XXXX' -o /path/to/out.md
@@ -146,7 +151,7 @@ Session: `~/.config/doc2md/feishu_storage_state.json` (and `feishu_cookie.txt` b
 - DOCX / EPUB / HTML: markitdown `keep_data_uris=True` on **convert()**, then decode data URIs to `<stem>_assets/`.
 - **PPTX**: per-slide **theme text** + **one full-slide screenshot**.
   PPTX→PDF via `office2pdf-python` (no system Office required); LibreOffice `soffice` is optional fallback; then PyMuPDF renders page PNGs.
-- WPS `.otl` intelligent docs: cannot use drive binary download (`notAllowType`); capture `open/otl` JSON + temporary CDN images via Playwright. **表格**（`outline-table`）渲染为 Markdown 表格（单元格内图片一并输出）；代码块带 `attrs.lang` 语言标签。 Nested file cards (`WPSDocument`) become Markdown links (not recursively converted).
+- WPS `.otl` intelligent docs: cannot use drive binary download (`notAllowType`); capture `open/otl` JSON + temporary CDN images via Playwright. **表格**（`outline-table`）渲染为 Markdown 表格（单元格内图片一并输出）；代码块带 `attrs.lang` 语言标签。 Nested file cards (`WPSDocument`) become Markdown links. **Do not recurse by default.** Only if the user asks to 展开嵌套 / 递归 / 把里面的 SOP/卡片也转成 md, pass `--recursive` (depth 1) or `--max-depth N`. Children land in `{stem}_nested/`; failed children keep the original kdocs link. A parent like 《微软替换物料合集》 has 20+ nested SOP/xlsx/pptx — warn that it can take a long time.
   - 图片：按 OTL `sourceKey` / `imgID` 映射到本地文件（避免表内图导致整篇错位）；优先 CDN 懒加载；若仍缺图，深滚并合并 `/attachment/shapes` 按 `sourceKey` 下载 `raw`，缺 key 时再滚一轮重试。
 
 ## Failure fallback (WPS / Feishu)

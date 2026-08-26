@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.4.11
+
+- Optional `--recursive` / `--max-depth` for WPS OTL nested file cards: convert unique child shares into `{stem}_nested/*.md` and rewrite parent links. Default remains links only (`max-depth 0`). One child failure does not fail the parent; share-id cycles are skipped.
+
 ## v0.4.10
 
 - Recognize WPS knowledge-wiki share URLs (`365.kdocs.cn/wiki/l/…`); `wiki/l/0l<id>` resolves to the inner file share id.

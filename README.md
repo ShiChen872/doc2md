@@ -11,7 +11,7 @@ Works with Cursor (desktop or CLI), Codex, and other Agent Skills–compatible h
 - **PDF**: text via markitdown + embedded images via PyMuPDF; **scanned/image-only PDFs** auto-detected and OCR'd page-by-page
 - **Images** (png/jpg/…): keep original in `*_assets/` + OCR via [RapidOCR](https://github.com/RapidAI/RapidOCR) (`rapidocr-onnxruntime`; tesseract fallback)
 - Cloud: `kdocs.cn` / `365.kdocs.cn` / `plus.wps.cn` share links; `feishu.cn` / `larksuite.com` wiki & docx
-- WPS intelligent docs (`.otl`): parse `open/otl` JSON; tables rendered as Markdown tables (including images in cells); nested file cards become Markdown links
+- WPS intelligent docs (`.otl`): parse `open/otl` JSON; tables rendered as Markdown tables (including images in cells); nested file cards become Markdown links; `--recursive` optionally converts those children one level
 - **WPS media** (`.mp4` / `view/media/l/`): Markdown card + cover; optional local `preview.mp4` via ffmpeg HLS remux when original download is denied
 - **WPS PDF shares**: if original download is denied, screenshot web-viewer pages (`page_NNN.png`) + OCR
 - **WPS presentations**: if `.pptx` download is denied, screenshot each web-viewer slide; `wiki/l/` knowledge links resolve to the file share
@@ -61,6 +61,8 @@ Image files and **scanned/image-only PDFs** are OCR'd to recover text.
 
 If a WPS or Feishu session is missing or expired, a Chrome window opens for you to log in; conversion then continues. Pass `--no-login` to skip that prompt.
 
+WPS OTL nested file cards stay as kdocs links by default. Pass `--recursive` (or `--max-depth N`) to convert those children into `{stem}_nested/*.md`.
+
 Agents (Cursor / Codex / Comate) should run `doc2md.py` for conversion to Markdown. Do not call WPS official APIs, replay `WPS_SID`, or drive Chrome/WPS with AppleScript. Run `md_to_pdf.py` only when the user asks for a PDF.
 
 ### Local file
@@ -75,8 +77,11 @@ Agents (Cursor / Codex / Comate) should run `doc2md.py` for conversion to Markdo
 # Optional: log in ahead of time (conversion also opens Chrome if the session expired)
 ~/.config/doc2md/venv/bin/python scripts/wps_login.py 'https://365.kdocs.cn/l/XXXX'
 
-# Convert to Markdown
+# Convert share link → Markdown (+ assets)
 ~/.config/doc2md/venv/bin/python scripts/wps_to_md.py 'https://365.kdocs.cn/l/XXXX' -o /path/to/out.md
+
+# Optional: also convert nested OTL file cards (one level)
+~/.config/doc2md/venv/bin/python scripts/wps_to_md.py 'https://365.kdocs.cn/l/XXXX' -o /path/to/out.md --recursive
 
 # Video / media share (needs ffmpeg on PATH for local preview.mp4)
 ~/.config/doc2md/venv/bin/python scripts/wps_to_md.py 'https://plus.wps.cn/view/media/l/XXXX' -o /path/to/out.md

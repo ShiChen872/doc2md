@@ -81,3 +81,5 @@ def test_cli_no_login_flag():
         text=True,
     )
     assert "--no-login" in help_text
+    assert "--recursive" in help_text
+    assert "--max-depth" in help_text

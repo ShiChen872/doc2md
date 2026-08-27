@@ -3,9 +3,9 @@ name: doc2md
 display_name: 文档转Markdown
 description: >-
   将本地文档、WPS/金山文档（kdocs / 365.kdocs / plus.wps.cn）与飞书/Lark 云文档（wiki / docx）分享链接转为 Markdown，图片提取到本地 assets 目录。
-  支持 docx、pdf、pptx、xlsx、epub、html、图片 OCR、WPS 智能文档（.otl）、WPS 媒体/视频分享（view/media）、WPS 流程图（.pom）/思维导图（.pof）及云文档分享链接。
+  支持 docx、pdf、pptx、xlsx、epub、html、图片 OCR、WPS 智能文档（.otl）、WPS 媒体/视频分享（view/media）、WPS 流程图（.pom）/思维导图（.pof）/白板（.kw）及云文档分享链接。
   使用场景：(1) 云文档/分享链接转 Markdown；(2) 本地 Office/PDF 转 md 并保留图片；(3) OTL / 飞书文档结构化导出；(4) WPS 视频分享转 md（封面 + 预览 mp4）；(5) 已有 Markdown 再转 PDF（用户明确要求时）。
-  触发关键词：转markdown、转md、doc2md、文档转markdown、云文档转md、kdocs转md、plus.wps、wps视频、媒体分享、view/media、飞书转md、feishu转md、otl转md、流程图、思维导图、转pdf、markdown转pdf、anything to markdown。
+  触发关键词：转markdown、转md、doc2md、文档转markdown、云文档转md、kdocs转md、plus.wps、wps视频、媒体分享、view/media、飞书转md、feishu转md、otl转md、流程图、思维导图、白板、画板、转pdf、markdown转pdf、anything to markdown。
 ---
 
 # doc2md — documents to Markdown
@@ -94,7 +94,9 @@ Session files (platform-agnostic):
 
 **WPS ksheet / dbsheet notes:** `.ksheet` (金山在线表格, `office_type=k`) downloads as an xlsx-compatible zip and becomes Markdown tables. `.dbt` 多维表 (`office_type=d`) cannot be downloaded (`notAllowType`); the CLI screenshots each left-rail sheet and nested view (grid / form / dashboard), clipping the main pane. That is the visible viewer, not a full record dump.
 
-**WPS 流程图 / 思维导图 notes:** `.pom` (流程图) and `.pof` (思维导图) open in a ProcessOn iframe (`#dotviewIframe`). Original download is skipped (not an Office zip). The CLI screenshots each bottom **画布** tab. This is the visible canvas, not a vector dump. WPS 画板 / 白板 and Feishu bitable / 画板 still have no dedicated branch.
+**WPS 流程图 / 思维导图 notes:** `.pom` (流程图) and `.pof` (思维导图) open in a ProcessOn iframe (`#dotviewIframe`). Original download is skipped (not an Office zip). The CLI screenshots each bottom **画布** tab. This is the visible canvas, not a vector dump.
+
+**WPS 白板 notes:** `.kw` (`office_type=b`) is the document-center 白板/画板, not 会议白板. The CLI screenshots the web canvas (`.kw_container`). This viewer also uses `.slide-uil-view`, so it is handled **before** PPT slide capture. Feishu bitable / 画板 still have no dedicated branch.
 
 ### Markdown → PDF (optional)
 

@@ -17,7 +17,8 @@ Flow:
   6. If blocked / `.otl` intelligent doc: capture open/otl JSON + CDN images → Markdown
   7. If `.dbt` / office_type=d (download notAllowType): screenshot each web-viewer sheet
   8. If `.pof` / `.pom` / `.pos` (WPS 思维导图 / 流程图, ProcessOn iframe): screenshot each canvas
-  9. Otherwise run convert.py on the downloaded Office file (`.ksheet` is xlsx-compatible)
+  9. If `.kw` / office_type=b (WPS 白板): screenshot the web canvas (must run before PPT; shares `.slide-uil-view`)
+  10. Otherwise run convert.py on the downloaded Office file (`.ksheet` is xlsx-compatible)
 """
 
 from __future__ import annotations
@@ -75,6 +76,8 @@ PO_FLOW_SEL = (
     "#view_container, #designer_viewport, #designer_canvas, #designer, #viewport"
 )
 MAX_DIAGRAM_CANVASES = 20
+BOARD_EXTS = {".kw"}
+BOARD_VIEW_SEL = ".kw_container, #whiteboard_svg, #workspace.showGrid"
 
 
 class WpsError(Exception):
@@ -146,6 +149,16 @@ def diagram_kind_from_name(fname: str = "") -> str:
     if ext == ".pom":
         return "flowchart"
     return "diagram"
+
+
+def is_wps_board_share(fname: str = "", office_type: str = "", ftype: str = "") -> bool:
+    """WPS 白板 / 画板 (`.kw`, office_type=b). Native weboffice, not ProcessOn."""
+    if Path(fname or "").suffix.lower() in BOARD_EXTS:
+        return True
+    for v in (office_type, ftype):
+        if str(v or "").lower() in {"b", "kw", "board", "whiteboard"}:
+            return True
+    return False
 
 
 def is_media_filename(fname: str) -> bool:
@@ -362,6 +375,8 @@ def build_pdf_preview_markdown(
         type_line = "> 类型: WPS 流程图分享（网页预览分页截图；按画布截图）"
     elif kind == "diagram":
         type_line = "> 类型: WPS 流程图/思维导图分享（网页预览分页截图；按画布截图）"
+    elif kind == "whiteboard":
+        type_line = "> 类型: WPS 白板分享（网页预览分页截图；可见画布）"
     else:
         type_line = "> 类型: WPS PDF 分享（网页预览分页截图 + OCR）"
     lines = [
@@ -377,7 +392,7 @@ def build_pdf_preview_markdown(
             if headings and i - 1 < len(headings):
                 heading = str(headings[i - 1] or "").strip()
             lines.append(f"## {heading or f'视图 {i}'}")
-        elif kind in {"mindmap", "flowchart", "diagram"}:
+        elif kind in {"mindmap", "flowchart", "diagram", "whiteboard"}:
             heading = ""
             if headings and i - 1 < len(headings):
                 heading = str(headings[i - 1] or "").strip()
@@ -1278,6 +1293,61 @@ def capture_diagram_preview_pages(page, assets_dir: Path) -> list[tuple[Path, st
     return saved
 
 
+def _page_has_whiteboard(page) -> bool:
+    try:
+        return page.locator(".kw_container, #whiteboard_svg").count() > 0
+    except Exception:
+        return False
+
+
+def capture_board_preview_pages(page, assets_dir: Path) -> list[tuple[Path, str]]:
+    """Screenshot the WPS whiteboard canvas (office_type=b / .kw)."""
+    try:
+        page.set_viewport_size({"width": 1600, "height": 1000})
+    except Exception:
+        pass
+    try:
+        page.wait_for_selector(BOARD_VIEW_SEL, timeout=25000)
+    except Exception:
+        return []
+    page.wait_for_timeout(800)
+    for _ in range(2):
+        try:
+            page.keyboard.press("Escape")
+        except Exception:
+            pass
+        page.wait_for_timeout(200)
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    for old in assets_dir.glob("page_*.png"):
+        old.unlink()
+
+    loc = None
+    for sel in (".kw_container", "#workspace", "#whiteboard_svg"):
+        cand = page.locator(sel).first
+        try:
+            if cand.count() == 0:
+                continue
+            box = cand.bounding_box()
+        except Exception:
+            continue
+        if box and box.get("width", 0) >= 80 and box.get("height", 0) >= 80:
+            loc = cand
+            break
+    dest = assets_dir / "page_001.png"
+    try:
+        if loc is not None:
+            loc.screenshot(path=str(dest))
+        else:
+            page.screenshot(path=str(dest))
+    except Exception:
+        dest.unlink(missing_ok=True)
+        return []
+    if not dest.is_file() or dest.stat().st_size < 500:
+        dest.unlink(missing_ok=True)
+        return []
+    return [(dest, "画布")]
+
+
 def write_pdf_preview_markdown(
     *,
     title: str,
@@ -1598,6 +1668,7 @@ def _share_to_markdown_once(
         is_wpp = is_presentation_share(fname)
         is_dbt = is_dbsheet_share(fname)
         is_diagram = is_wps_diagram_share(fname)
+        is_board = is_wps_board_share(fname, ftype=ftype)
 
         # --- media / video share: Markdown card + cover (no Office body) ---
         if is_media and file_id and group_id:
@@ -1745,7 +1816,7 @@ def _share_to_markdown_once(
 
         # --- try binary download for Office files ---
         downloaded: Path | None = None
-        if file_id and group_id and not is_otl and not is_diagram:
+        if file_id and group_id and not is_otl and not is_diagram and not is_board:
             dl_apis = [
                 (
                     f"https://365.kdocs.cn/3rd/drive/api/v5/groups/{group_id}/files/{file_id}/download"
@@ -1880,6 +1951,11 @@ def _share_to_markdown_once(
                 is_diagram = is_diagram or is_wps_diagram_share(
                     fname, office_type=str(env.get("office_type") or "")
                 )
+                is_board = is_board or is_wps_board_share(
+                    fname,
+                    office_type=str(env.get("office_type") or ""),
+                    ftype=ftype,
+                )
         except Exception:
             pass
 
@@ -1917,9 +1993,64 @@ def _share_to_markdown_once(
             result["markdown_chars"] = stats.get("markdown_chars")
             return result
 
+        # Whiteboard (.kw / office_type=b) also uses .slide-uil-view — capture before PPT.
+        is_board = is_board or _page_has_whiteboard(page)
+        board_ready = False
+        if is_board or _page_has_whiteboard(page):
+            try:
+                page.wait_for_selector(BOARD_VIEW_SEL, timeout=15000)
+                board_ready = True
+            except Exception:
+                board_ready = False
+        if board_ready:
+            stem = safe_stem(Path(fname).stem if fname else sid)
+            if output_md.name in {"out.md", "output.md"} or output_md.stem == "wps_out":
+                output_md = output_md.with_name(f"{stem}.md")
+                result["output"] = str(output_md)
+            assets_dir = output_md.parent / f"{output_md.stem}_assets"
+            captured = capture_board_preview_pages(page, assets_dir)
+            if not captured:
+                try:
+                    browser.close()
+                except Exception:
+                    pass
+                raise WpsError(
+                    "Could not capture the whiteboard canvas. "
+                    "Re-run wps_login.py, or export PNG from the WPS UI and run convert.py."
+                )
+            page_files = [p for p, _ in captured]
+            headings = [name for _, name in captured]
+            stats = write_pdf_preview_markdown(
+                title=Path(fname).stem or stem,
+                source_url=url,
+                output_md=output_md,
+                page_files=page_files,
+                kind="whiteboard",
+                headings=headings,
+                ocr=False,
+            )
+            try:
+                browser.close()
+            except Exception:
+                pass
+            result["mode"] = "board-preview"
+            result["convert"] = stats
+            result["pages"] = stats.get("pages")
+            result["views"] = headings
+            result["assets_dir"] = stats.get("assets_dir")
+            result["markdown_chars"] = stats.get("markdown_chars")
+            return result
+
+        if is_board:
+            browser.close()
+            raise WpsError(
+                "Could not load the whiteboard web viewer. "
+                "Re-run wps_login.py, or export PNG from the WPS UI and run convert.py."
+            )
+
         # Presentation shares often deny original download; screenshot each slide.
         wpp_ready = False
-        if is_wpp or page.locator(WPP_SLIDE_SEL).count() > 0:
+        if (is_wpp or page.locator(WPP_SLIDE_SEL).count() > 0) and not is_board:
             try:
                 page.wait_for_selector(WPP_SLIDE_SEL, timeout=15000)
                 wpp_ready = True

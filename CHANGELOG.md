@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.4.14
+
+- WPS 白板 (`.kw`, `office_type=b`): screenshot the web canvas (`.kw_container`). Must run before PPT capture because this viewer also uses `.slide-uil-view`. Feishu bitable / 画板 still out of scope.
+
 ## v0.4.13
 
 - WPS 流程图 (`.pom`) / 思维导图 (`.pof`, export often `.pos`): skip Office-zip convert; screenshot each ProcessOn canvas tab in `#dotviewIframe`. Visible canvas, not a vector dump. WPS 画板/白板 is still out of scope.

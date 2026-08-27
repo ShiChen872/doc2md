@@ -17,6 +17,7 @@ Works with Cursor (desktop or CLI), Codex, and other Agent Skills–compatible h
 - **WPS presentations**: if `.pptx` download is denied, screenshot each web-viewer slide; `wiki/l/` knowledge links resolve to the file share
 - **WPS ksheet**: downloads as xlsx-compatible zip → Markdown tables
 - **WPS dbsheet** (`.dbt`): if download is denied, screenshot each web-viewer sheet/dashboard
+- **WPS 流程图 / 思维导图** (`.pom` / `.pof`): screenshot each ProcessOn canvas tab (not 画板/白板)
 - **Markdown → PDF** (optional): `md_to_pdf.py` prints a local `.md` via Chrome by default (目录 / 页眉 / 页码). `--engine typst --theme brand` is optional branded typesetting (needs Typst). WPS Save As PDF is a manual fallback
 - **Feishu**: Playwright session (`feishu_login.py`) + in-page `PageMain` block tree → Markdown + assets; code fences keep language (enum mapped); file attachments and bookmarks from fallback blocks
 - **OTL images**: place by `sourceKey` / `imgID` (not array index); prefer CDN match; if incomplete, scroll + `/attachment/shapes` by `sourceKey`, with a second pass for any still-missing keys

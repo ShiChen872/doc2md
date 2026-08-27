@@ -68,6 +68,22 @@ def test_is_ksheet_and_dbsheet_share():
     assert "view-item" in wtm.DB_SHEET_ITEM_SEL
 
 
+def test_is_wps_diagram_share():
+    assert wtm.is_wps_diagram_share("立项导航.pof")
+    assert wtm.is_wps_diagram_share("过程看板.pom")
+    assert wtm.is_wps_diagram_share("export.pos")
+    assert wtm.is_wps_diagram_share("x", office_type="processon")
+    assert wtm.diagram_kind_from_name("立项导航.pof") == "mindmap"
+    assert wtm.diagram_kind_from_name("过程看板.pom") == "flowchart"
+    assert wtm.diagram_kind_from_name("export.pos") == "diagram"
+    assert not wtm.is_wps_diagram_share("notes.otl")
+    assert not wtm.is_wps_diagram_share("deck.pptx")
+    assert not wtm.is_wps_diagram_share("项目管理.dbt")
+    assert not wtm.is_wps_diagram_share("board.otl", office_type="o")
+    assert ".page_tab_item" in wtm.PO_CANVAS_TAB_SEL
+    assert "dotviewIframe" in wtm.PO_IFRAME_SEL
+
+
 def test_is_media_filename():
     assert wtm.is_media_filename("comate-产品介绍.mp4")
     assert wtm.is_media_filename("a.MOV")
@@ -126,6 +142,26 @@ def test_build_pdf_preview_markdown():
     assert "## 风险及策略" in db
     assert "## 仪表盘" in db
     assert "风险 P0" in db
+    mind = wtm.build_pdf_preview_markdown(
+        title="立项导航",
+        source_url="https://www.kdocs.cn/l/ch33TCIxbqBq",
+        pages=[("nav_assets/page_001.png", "节点文字")],
+        kind="mindmap",
+        headings=["画布1"],
+    )
+    assert "思维导图" in mind
+    assert "网页预览分页截图" in mind
+    assert "## 画布1" in mind
+    flow = wtm.build_pdf_preview_markdown(
+        title="过程看板",
+        source_url="https://www.kdocs.cn/l/coq7afRkUCIR",
+        pages=[("flow_assets/page_001.png", "")],
+        kind="flowchart",
+        headings=["画布1"],
+    )
+    assert "流程图" in flow
+    assert "网页预览分页截图" in flow
+    assert "![](flow_assets/page_001.png)" in flow
 
 
 def test_build_media_markdown_includes_cover_and_stream():

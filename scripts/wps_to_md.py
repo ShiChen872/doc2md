@@ -16,7 +16,8 @@ Flow:
   5. If blocked presentation (`.pptx` / office_type=p): screenshot each slide
   6. If blocked / `.otl` intelligent doc: capture open/otl JSON + CDN images → Markdown
   7. If `.dbt` / office_type=d (download notAllowType): screenshot each web-viewer sheet
-  8. Otherwise run convert.py on the downloaded Office file (`.ksheet` is xlsx-compatible)
+  8. If `.pof` / `.pom` / `.pos` (WPS 思维导图 / 流程图, ProcessOn iframe): screenshot each canvas
+  9. Otherwise run convert.py on the downloaded Office file (`.ksheet` is xlsx-compatible)
 """
 
 from __future__ import annotations
@@ -66,6 +67,14 @@ DB_VIEW_SEL = (
 MAX_DBSHEET_SHEETS = 40
 KSHEET_EXTS = {".ksheet"}
 DBSHEET_EXTS = {".dbt", ".dbsheet"}
+DIAGRAM_EXTS = {".pof", ".pom", ".pos"}
+PO_IFRAME_SEL = "#dotviewIframe"
+PO_CANVAS_TAB_SEL = ".page_tab_item"
+PO_MIND_SEL = "#mind_con, .mind-container"
+PO_FLOW_SEL = (
+    "#view_container, #designer_viewport, #designer_canvas, #designer, #viewport"
+)
+MAX_DIAGRAM_CANVASES = 20
 
 
 class WpsError(Exception):
@@ -108,6 +117,35 @@ def is_dbsheet_share(fname: str = "", office_type: str = "") -> bool:
     if Path(fname or "").suffix.lower() in DBSHEET_EXTS:
         return True
     return str(office_type or "").lower() in {"d", "db", "dbt", "dbsheet"}
+
+
+def is_wps_diagram_share(fname: str = "", office_type: str = "") -> bool:
+    """WPS 思维导图 (.pof) / 流程图 (.pom); .pos is the common export suffix.
+
+    Not 画板/白板. Viewer is ProcessOn in `#dotviewIframe`.
+    """
+    if Path(fname or "").suffix.lower() in DIAGRAM_EXTS:
+        return True
+    return str(office_type or "").lower() in {
+        "po",
+        "pof",
+        "pom",
+        "pos",
+        "processon",
+        "mind",
+        "mindmap",
+        "flow",
+        "flowchart",
+    }
+
+
+def diagram_kind_from_name(fname: str = "") -> str:
+    ext = Path(fname or "").suffix.lower()
+    if ext == ".pof":
+        return "mindmap"
+    if ext == ".pom":
+        return "flowchart"
+    return "diagram"
 
 
 def is_media_filename(fname: str) -> bool:
@@ -318,6 +356,12 @@ def build_pdf_preview_markdown(
         type_line = "> 类型: WPS 演示文稿分享（网页预览分页截图；分享禁止原文件下载）"
     elif kind == "dbsheet":
         type_line = "> 类型: WPS 多维表分享（网页预览分页截图；按左侧视图截图，原文件类型不允许下载）"
+    elif kind == "mindmap":
+        type_line = "> 类型: WPS 思维导图分享（网页预览分页截图；按画布截图）"
+    elif kind == "flowchart":
+        type_line = "> 类型: WPS 流程图分享（网页预览分页截图；按画布截图）"
+    elif kind == "diagram":
+        type_line = "> 类型: WPS 流程图/思维导图分享（网页预览分页截图；按画布截图）"
     else:
         type_line = "> 类型: WPS PDF 分享（网页预览分页截图 + OCR）"
     lines = [
@@ -333,6 +377,11 @@ def build_pdf_preview_markdown(
             if headings and i - 1 < len(headings):
                 heading = str(headings[i - 1] or "").strip()
             lines.append(f"## {heading or f'视图 {i}'}")
+        elif kind in {"mindmap", "flowchart", "diagram"}:
+            heading = ""
+            if headings and i - 1 < len(headings):
+                heading = str(headings[i - 1] or "").strip()
+            lines.append(f"## {heading or f'画布 {i}'}")
         else:
             lines.append(f"## 第 {i} 页")
         lines.append("")
@@ -1073,6 +1122,162 @@ def capture_dbsheet_preview_pages(page, assets_dir: Path) -> list[tuple[Path, st
     return saved
 
 
+def _processon_frame(page):
+    """ProcessOn editor/view frame inside WPS `#dotviewIframe` (not oauth)."""
+    try:
+        page.wait_for_selector(PO_IFRAME_SEL, timeout=25000)
+    except Exception:
+        return None
+    for _ in range(40):
+        for fr in page.frames:
+            url = fr.url or ""
+            if "processon.com" not in url:
+                continue
+            if "oauth" in url or "callback" in url:
+                continue
+            return fr
+        page.wait_for_timeout(250)
+    return None
+
+
+def _diagram_kind(fname: str = "", frame=None) -> str:
+    kind = diagram_kind_from_name(fname)
+    if kind != "diagram":
+        return kind
+    if frame is None:
+        return kind
+    try:
+        mind = frame.locator(PO_MIND_SEL).first
+        if mind.count():
+            box = mind.bounding_box()
+            if box and box.get("height", 0) > 80:
+                return "mindmap"
+    except Exception:
+        pass
+    try:
+        flow = frame.locator(PO_FLOW_SEL).first
+        if flow.count():
+            box = flow.bounding_box()
+            if box and box.get("height", 0) > 80:
+                return "flowchart"
+    except Exception:
+        pass
+    return "diagram"
+
+
+def _diagram_shot_target(frame, page):
+    for sel in (PO_MIND_SEL, PO_FLOW_SEL):
+        loc = frame.locator(sel).first
+        try:
+            if loc.count() == 0:
+                continue
+            box = loc.bounding_box()
+        except Exception:
+            continue
+        if box and box.get("width", 0) >= 80 and box.get("height", 0) >= 80:
+            return loc
+    return page.locator(PO_IFRAME_SEL).first
+
+
+def _page_has_processon_iframe(page) -> bool:
+    try:
+        loc = page.locator(PO_IFRAME_SEL)
+        if loc.count() == 0:
+            return False
+        src = str(loc.first.get_attribute("src") or "")
+        return "processon.com" in src
+    except Exception:
+        return False
+
+
+def capture_diagram_preview_pages(page, assets_dir: Path) -> list[tuple[Path, str]]:
+    """Screenshot each ProcessOn canvas tab (WPS .pof / .pom / .pos)."""
+    frame = _processon_frame(page)
+    if frame is None:
+        return []
+    try:
+        page.set_viewport_size({"width": 1600, "height": 1000})
+    except Exception:
+        pass
+    try:
+        frame.wait_for_selector(
+            f"{PO_MIND_SEL}, {PO_FLOW_SEL}, canvas, svg", timeout=20000
+        )
+    except Exception:
+        pass
+    page.wait_for_timeout(800)
+    for _ in range(2):
+        try:
+            page.keyboard.press("Escape")
+        except Exception:
+            pass
+        page.wait_for_timeout(200)
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    for old in assets_dir.glob("page_*.png"):
+        old.unlink()
+
+    def _shot(dest: Path) -> bool:
+        loc = _diagram_shot_target(frame, page)
+        try:
+            loc.screenshot(path=str(dest))
+        except Exception:
+            try:
+                page.locator(PO_IFRAME_SEL).screenshot(path=str(dest))
+            except Exception:
+                return False
+        return dest.is_file() and dest.stat().st_size >= 500
+
+    tabs: list[tuple[int, str]] = []
+    loc_tabs = frame.locator(PO_CANVAS_TAB_SEL)
+    try:
+        count = loc_tabs.count()
+    except Exception:
+        count = 0
+    for i in range(min(count, MAX_DIAGRAM_CANVASES)):
+        el = loc_tabs.nth(i)
+        try:
+            box = el.bounding_box()
+        except Exception:
+            box = None
+        if not box or box.get("width", 0) < 12 or box.get("height", 0) < 8:
+            continue
+        try:
+            raw = el.inner_text(timeout=1000)
+        except Exception:
+            raw = ""
+        name = _clean_dbsheet_name(raw) or f"画布 {i + 1}"
+        if name in {"+", "＋"}:
+            continue
+        tabs.append((i, name))
+
+    saved: list[tuple[Path, str]] = []
+    seen: set[str] = set()
+    if not tabs:
+        dest = assets_dir / "page_001.png"
+        if _shot(dest):
+            return [(dest, "画布 1")]
+        dest.unlink(missing_ok=True)
+        return []
+
+    for n, (idx, name) in enumerate(tabs, 1):
+        try:
+            loc_tabs.nth(idx).click(timeout=4000)
+        except Exception:
+            continue
+        page.wait_for_timeout(900)
+        dest = assets_dir / f"page_{n:03d}.png"
+        if not _shot(dest):
+            dest.unlink(missing_ok=True)
+            continue
+        digest = hashlib.sha256(dest.read_bytes()).hexdigest()
+        if digest in seen:
+            dest.unlink(missing_ok=True)
+            continue
+        seen.add(digest)
+        saved.append((dest, name))
+    return saved
+
+
 def write_pdf_preview_markdown(
     *,
     title: str,
@@ -1392,6 +1597,7 @@ def _share_to_markdown_once(
         is_pdf = is_pdf_share(fname, ftype=ftype)
         is_wpp = is_presentation_share(fname)
         is_dbt = is_dbsheet_share(fname)
+        is_diagram = is_wps_diagram_share(fname)
 
         # --- media / video share: Markdown card + cover (no Office body) ---
         if is_media and file_id and group_id:
@@ -1539,7 +1745,7 @@ def _share_to_markdown_once(
 
         # --- try binary download for Office files ---
         downloaded: Path | None = None
-        if file_id and group_id and not is_otl:
+        if file_id and group_id and not is_otl and not is_diagram:
             dl_apis = [
                 (
                     f"https://365.kdocs.cn/3rd/drive/api/v5/groups/{group_id}/files/{file_id}/download"
@@ -1671,6 +1877,9 @@ def _share_to_markdown_once(
                 is_dbt = is_dbt or is_dbsheet_share(
                     fname, office_type=str(env.get("office_type") or "")
                 )
+                is_diagram = is_diagram or is_wps_diagram_share(
+                    fname, office_type=str(env.get("office_type") or "")
+                )
         except Exception:
             pass
 
@@ -1743,6 +1952,65 @@ def _share_to_markdown_once(
             result["assets_dir"] = stats.get("assets_dir")
             result["markdown_chars"] = stats.get("markdown_chars")
             return result
+
+        # Flowchart / mind map: ProcessOn iframe; screenshot each canvas tab.
+        is_diagram = is_diagram or _page_has_processon_iframe(page)
+        diagram_ready = False
+        if is_diagram or page.locator(PO_IFRAME_SEL).count() > 0:
+            try:
+                page.wait_for_selector(PO_IFRAME_SEL, timeout=15000)
+                diagram_ready = _processon_frame(page) is not None or _page_has_processon_iframe(
+                    page
+                )
+            except Exception:
+                diagram_ready = False
+        if diagram_ready:
+            stem = safe_stem(Path(fname).stem if fname else sid)
+            if output_md.name in {"out.md", "output.md"} or output_md.stem == "wps_out":
+                output_md = output_md.with_name(f"{stem}.md")
+                result["output"] = str(output_md)
+            assets_dir = output_md.parent / f"{output_md.stem}_assets"
+            captured = capture_diagram_preview_pages(page, assets_dir)
+            kind = _diagram_kind(fname, _processon_frame(page))
+            if not captured:
+                try:
+                    browser.close()
+                except Exception:
+                    pass
+                raise WpsError(
+                    "Could not capture flowchart/mind-map canvases. "
+                    "Re-run wps_login.py, or export PNG from the WPS UI and run convert.py."
+                )
+            page_files = [p for p, _ in captured]
+            headings = [name for _, name in captured]
+            stats = write_pdf_preview_markdown(
+                title=Path(fname).stem or stem,
+                source_url=url,
+                output_md=output_md,
+                page_files=page_files,
+                kind=kind,
+                headings=headings,
+                ocr=False,
+            )
+            try:
+                browser.close()
+            except Exception:
+                pass
+            result["mode"] = "diagram-preview"
+            result["diagram_kind"] = kind
+            result["convert"] = stats
+            result["pages"] = stats.get("pages")
+            result["views"] = headings
+            result["assets_dir"] = stats.get("assets_dir")
+            result["markdown_chars"] = stats.get("markdown_chars")
+            return result
+
+        if is_diagram:
+            browser.close()
+            raise WpsError(
+                "Could not load the flowchart/mind-map web viewer. "
+                "Re-run wps_login.py, or export PNG from the WPS UI and run convert.py."
+            )
 
         # Dbsheet shares deny original download (notAllowType); screenshot each view.
         dbt_ready = False

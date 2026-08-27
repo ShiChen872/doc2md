@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.4.13
+
+- WPS 流程图 (`.pom`) / 思维导图 (`.pof`, export often `.pos`): skip Office-zip convert; screenshot each ProcessOn canvas tab in `#dotviewIframe`. Visible canvas, not a vector dump. WPS 画板/白板 is still out of scope.
+
 ## v0.4.12
 
 - WPS dbsheet (`.dbt`, `office_type=d`): original download is `notAllowType`; screenshot each web-viewer sheet **and nested view** (grid / form / dashboard), clipping the main pane. `.ksheet` already downloads as xlsx-compatible zip.

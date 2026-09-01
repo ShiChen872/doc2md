@@ -36,6 +36,21 @@ from md_to_typst import (  # noqa: E402
 HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 VIDEO_TAG_RE = re.compile(r"<video\b([^>]*)>(.*?)</video>", re.IGNORECASE | re.DOTALL)
 IFRAME_TAG_RE = re.compile(r"<iframe\b([^>]*)>(.*?)</iframe>", re.IGNORECASE | re.DOTALL)
+# Print isolation: no script/network. Local file/data images and inline CSS stay.
+PRINT_CSP = (
+    "default-src 'none'; "
+    "img-src file: data:; "
+    "style-src 'unsafe-inline'; "
+    "font-src 'none'; "
+    "connect-src 'none'; "
+    "script-src 'none'; "
+    "frame-src 'none'; "
+    "object-src 'none'; "
+    "media-src 'none'; "
+    "worker-src 'none'; "
+    "base-uri 'none'; "
+    "form-action 'none'"
+)
 ATTR_SRC_RE = re.compile(r"""\bsrc\s*=\s*["']([^"']+)["']""", re.IGNORECASE)
 MD_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
 HTML_SRC_RE = re.compile(
@@ -501,12 +516,31 @@ def markdown_to_body_html(text: str) -> str:
     )
 
 
+def print_request_allowed(url: str) -> bool:
+    """Chrome print may load file:/data: assets only — never http(s)."""
+    lower = (url or "").strip().lower()
+    if lower.startswith("file:") or lower.startswith("data:"):
+        return True
+    return lower in {"about:blank", "about:srcdoc"}
+
+
+def attach_print_network_guard(page) -> None:
+    def _guard(route) -> None:
+        if print_request_allowed(route.request.url):
+            route.continue_()
+        else:
+            route.abort()
+
+    page.route("**/*", _guard)
+
+
 def wrap_document(body_html: str, *, title: str, theme: str = "default") -> str:
     safe_title = html_lib.escape(title or "document")
     css = print_css(theme)
     return (
         "<!DOCTYPE html>\n<html lang=\"zh-CN\">\n<head>\n"
         '<meta charset="utf-8"/>\n'
+        f'<meta http-equiv="Content-Security-Policy" content="{PRINT_CSP}"/>\n'
         f"<title>{safe_title}</title>\n"
         f"<style>{css}</style>\n"
         "</head>\n<body>\n"
@@ -575,7 +609,7 @@ FOOTER_TEMPLATE = footer_template("default")
 def render_pdf_with_chrome(
     html: str, output_pdf: Path, *, md_dir: Path, theme: str = "default"
 ) -> None:
-    """Print HTML via system Chrome. Writes a sibling temp file so local images load."""
+    """Print HTML via system Chrome. JS off, CSP, and no http(s) fetches."""
     from playwright.sync_api import sync_playwright
 
     output_pdf.parent.mkdir(parents=True, exist_ok=True)
@@ -584,7 +618,9 @@ def render_pdf_with_chrome(
         tmp.write_text(html, encoding="utf-8")
         with sync_playwright() as p:
             browser = p.chromium.launch(channel="chrome", headless=True)
-            page = browser.new_page()
+            context = browser.new_context(java_script_enabled=False)
+            page = context.new_page()
+            attach_print_network_guard(page)
             page.goto(tmp.as_uri(), wait_until="load", timeout=60000)
             try:
                 page.evaluate(

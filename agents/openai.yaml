@@ -1,0 +1,4 @@
+interface:
+  display_name: "文档转 Markdown"
+  short_description: "Convert local, WPS, and Feishu docs to Markdown"
+  default_prompt: "Use $doc2md to convert this file or share link to Markdown with local image assets."

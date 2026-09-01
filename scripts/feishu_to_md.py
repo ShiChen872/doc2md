@@ -26,6 +26,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, unquote, urlencode, urlparse, urlunparse
 
+import session as sess
+
 CFG = Path.home() / ".config" / "doc2md"
 DEFAULT_STATE = CFG / "feishu_storage_state.json"
 SAFE_NAME_RE = re.compile(r"[^\w.\u4e00-\u9fff\-]+")
@@ -810,8 +812,7 @@ def capture_feishu_preview_pages(
     _dismiss_feishu_guides(page)
     page.wait_for_timeout(600)
     assets_dir.mkdir(parents=True, exist_ok=True)
-    for old in assets_dir.glob("page_*.png"):
-        old.unlink()
+    sess.clear_generated_assets(assets_dir, patterns=("page_*.png",))
     loc = None
     for candidate in (sel + ", #mainBox").split(","):
         cand = page.locator(candidate.strip()).first
@@ -1513,10 +1514,9 @@ def share_to_markdown(
     auto_login: bool = True,
     _login_retried: bool = False,
     insecure: bool = False,
+    keep_work: bool = False,
 ) -> dict[str, Any]:
     from playwright.sync_api import sync_playwright
-
-    import session as sess
 
     info = parse_feishu_url(url)
     url = info["url"]
@@ -1648,14 +1648,6 @@ def share_to_markdown(
                 md, images_saved = download_assets(page, model, assets_dir, md)
                 output_md.write_text(md, encoding="utf-8")
 
-                # Dump raw model beside work for debugging (hidden)
-                work = output_md.parent / f".doc2md_work_feishu_{info['token']}"
-                work.mkdir(parents=True, exist_ok=True)
-                (work / f"{stem}.blocks.json").write_text(
-                    json.dumps(model, ensure_ascii=False, indent=2),
-                    encoding="utf-8",
-                )
-
                 result = {
                     "ok": True,
                     "url": url,
@@ -1668,6 +1660,16 @@ def share_to_markdown(
                     "markdown_chars": len(md),
                     "storage_state": str(state_path) if state_path.is_file() else None,
                 }
+                if keep_work:
+                    work = sess.make_work_dir(
+                        f"feishu_{info['token']}", keep=True, beside=output_md
+                    )
+                    (work / f"{stem}.blocks.json").write_text(
+                        json.dumps(model, ensure_ascii=False, indent=2),
+                        encoding="utf-8",
+                    )
+                    result["work_dir"] = str(work)
+
                 browser.close()
                 return result
             except FeishuError as e:
@@ -1696,6 +1698,7 @@ def share_to_markdown(
             auto_login=auto_login,
             _login_retried=True,
             insecure=insecure,
+            keep_work=keep_work,
         )
     raise FeishuError(str(last_err) if last_err else "conversion failed")
 
@@ -1722,6 +1725,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Disable HTTPS certificate checks (enterprise MITM/proxy only)",
     )
+    parser.add_argument(
+        "--keep-work",
+        action="store_true",
+        help="Keep .doc2md_work_* next to the Markdown (blocks JSON dump). Default: do not write it.",
+    )
     args = parser.parse_args(argv)
 
     url = normalize_url(args.url)
@@ -1744,6 +1752,7 @@ def main(argv: list[str] | None = None) -> int:
             timeout_ms=args.timeout_ms,
             auto_login=not args.no_login,
             insecure=args.insecure,
+            keep_work=args.keep_work,
         )
     except FeishuError as e:
         print(f"ERROR: {e}", file=sys.stderr)

@@ -1,0 +1,25 @@
+[project]
+name = "doc2md"
+version = "0.4.17"
+description = "Convert local, WPS/kdocs, and Feishu/Lark documents to Markdown."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+# Runtime deps stay in scripts/requirements.txt so the skill CLI can
+# `pip install -r` without installing this directory as a package.
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0", "ruff>=0.6.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+target-version = "py311"
+src = ["scripts", "tests"]
+line-length = 100
+
+[tool.ruff.lint]
+# Syntax / undefined-name class errors only. Do not reformat the existing CLIs.
+select = ["E9", "F63", "F7", "F82"]

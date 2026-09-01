@@ -20,7 +20,7 @@ Works with Cursor (desktop or CLI), Codex, and other Agent Skills–compatible h
 - **WPS 流程图 / 思维导图** (`.pom` / `.pof`): screenshot each ProcessOn canvas tab (not 画板/白板)
 - **WPS 白板** (`.kw`, `office_type=b`): screenshot the web canvas (handled before PPT; not Feishu 画板)
 - **Feishu 画板 / 多维表格 / 电子表格 / 思维笔记**: standalone `/board/` `/base/` `/sheets/` `/mindnotes/` screenshot the visible viewer; matching in-doc blocks screenshot instead of an HTML skip
-- **Markdown → PDF** (optional): `md_to_pdf.py` prints a local `.md` via Chrome by default (目录 / 页眉 / 页码). Page/slide screenshots are JPEG-compressed for print (`--no-compress` to keep PNG). `--engine typst --theme brand` is optional branded typesetting (needs Typst). `--engine=wps` is not supported (no silent fallback). WPS Save As PDF is a manual GUI fallback
+- **Markdown → PDF** (optional): `md_to_pdf.py` prints a local `.md` via Chrome by default (目录 / 页眉 / 页码). Print isolation: JS off, CSP, no `http(s)`. Page/slide screenshots are JPEG-compressed for print (`--no-compress` to keep PNG). `--engine typst --theme brand` is optional branded typesetting (needs Typst). `--engine=wps` is not supported (no silent fallback). WPS Save As PDF is a manual GUI fallback
 - **Feishu**: Playwright session (`feishu_login.py`) + in-page `PageMain` block tree → Markdown + assets; code fences keep language (enum mapped); file attachments and bookmarks from fallback blocks
 - **OTL images**: place by `sourceKey` / `imgID` (not array index); capture CDN and `/attachment/shapes` `raw`, keep the sharper (more pixels). If CDN is incomplete, use shapes by `sourceKey` only
 - Images saved as relative Markdown links (not base64)
@@ -45,13 +45,6 @@ Image files and **scanned/image-only PDFs** are OCR'd to recover text.
   - macOS: `brew install tesseract` then `brew install tesseract-lang` (provides `chi_sim`)
   - Debian/Ubuntu: `apt install tesseract-ocr tesseract-ocr-chi-sim`
 - If neither is available, the image is still copied to `*_assets/` and a note is added.
-
-### Tests (optional)
-
-```bash
-~/.config/doc2md/venv/bin/pip install pytest
-~/.config/doc2md/venv/bin/python -m pytest tests/ -q
-```
 
 ## Usage
 
@@ -141,23 +134,35 @@ The config directory is `0700` and session files are `0600`. Plaintext `*_cookie
 | `feishu_to_md.py` | Feishu wiki/docx URL → Markdown |
 | `md_to_pdf.py` | Local Markdown → PDF (Chrome default; optional Typst brand theme) |
 
-See [SKILL.md](SKILL.md) for agent-oriented workflow instructions.
+See [SKILL.md](SKILL.md) for agent-oriented workflow. Type-specific notes are in `references/` (`wps.md`, `feishu.md`, `local.md`, `pdf.md`).
+
+### Tests / CI
+
+```bash
+~/.config/doc2md/venv/bin/pip install -r tests/requirements-dev.txt
+~/.config/doc2md/venv/bin/python -m pytest tests/ -q
+```
+
+`pyproject.toml` holds pytest/ruff config. GitHub Actions runs compileall, ruff, and pytest on Python 3.11 and 3.12.
 
 ### Comate install zip
 
 Comate's security audit times out if the zip includes tests (code=500102 / LLM 504).
-The cloud package is **slim**: `SKILL.md` + `scripts/` only.
+The cloud package is **slim**: `SKILL.md` + `scripts/` + `references/`.
+`pack-comate.sh` injects `display_name: 文档转Markdown` into the zipped `SKILL.md` (git source stays validator-clean).
 
 ```bash
-./pack-comate.sh 0.4.16 /path/to/doc2md-0.4.16-comate.zip
+./pack-comate.sh 0.4.17 /path/to/doc2md-0.4.17-comate.zip
 ```
 
-GitHub source still includes `tests/` (clone + pytest). Do not pack `tests/`, `README.md`, or `CHANGELOG.md` into the Comate zip.
+GitHub source still includes `tests/` (clone + pytest). Do not pack `tests/`, `README.md`, `CHANGELOG.md`, or `agents/` into the Comate zip.
 
 ## Notes
 
 - WPS cloud access uses unofficial web APIs and may break when WPS changes their frontend.
 - Prefer re-login via the conversion prompt (or `wps_login.py` / `feishu_login.py`), or manually export from the product UI and run `convert.py`.
+- WPS/Feishu scratch dirs (OTL JSON, stream URLs, Feishu blocks JSON) are temp + deleted unless `--keep-work`.
+- A non-empty custom `--assets-dir` is not glob-wiped unless `--force-clean`.
 - Do not commit cookies or `~/.config/doc2md/` session files.
 
 ## License

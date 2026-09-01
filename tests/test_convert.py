@@ -159,5 +159,54 @@ def test_inject_pdf_scan_ocr_appends():
     assert "ocr text" in out
 
 
+def test_convert_custom_assets_dir_does_not_wipe(tmp_path: Path):
+    src = tmp_path / "photo.png"
+    src.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 60)
+    custom = tmp_path / "shared_assets"
+    custom.mkdir()
+    preset = custom / "page_001.png"
+    preset.write_bytes(b"user-page")
+    named_dir = custom / "image_x"
+    named_dir.mkdir()
+    leftover = custom / "image_002.png"
+    leftover.write_bytes(b"keep-me")
+    out = tmp_path / "photo.md"
+    conv.convert(src, out, custom)
+    assert preset.is_file()
+    assert preset.read_bytes() == b"user-page"
+    assert named_dir.is_dir()
+    assert leftover.is_file()
+    assert leftover.read_bytes() == b"keep-me"
+    assert (custom / "image_001.png").is_file()
+
+
+def test_convert_force_clean_wipes_custom_generated(tmp_path: Path):
+    src = tmp_path / "photo.png"
+    src.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 60)
+    custom = tmp_path / "shared_assets"
+    custom.mkdir()
+    (custom / "image_002.png").write_bytes(b"old")
+    (custom / "image_x").mkdir()
+    (custom / "page_001.png").write_bytes(b"user-page")
+    out = tmp_path / "photo.md"
+    conv.convert(src, out, custom, force_clean=True)
+    assert not (custom / "image_002.png").exists()
+    assert (custom / "image_x").is_dir()
+    assert not (custom / "page_001.png").exists()
+    assert (custom / "image_001.png").is_file()
+
+
+def test_convert_image_file_skips_directory_named_image(tmp_path: Path):
+    src = tmp_path / "photo.png"
+    src.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 60)
+    assets = tmp_path / "photo_assets"
+    assets.mkdir()
+    (assets / "image_x").mkdir()
+    text, n = conv.convert_image_file(src, assets, "photo_assets", title="photo")
+    assert n == 1
+    assert (assets / "image_x").is_dir()
+    assert (assets / "image_001.png").is_file()
+
+
 def test_inject_pdf_scan_ocr_empty():
     assert conv.inject_pdf_scan_ocr("body", []) == "body"

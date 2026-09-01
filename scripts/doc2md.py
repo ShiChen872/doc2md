@@ -102,11 +102,17 @@ def _print_result(payload: object) -> None:
             print(f"{key}: {value}")
 
 
-def run_convert(raw: str, output: Path, *, assets_dir: Path | None = None) -> int:
+def run_convert(
+    raw: str,
+    output: Path,
+    *,
+    assets_dir: Path | None = None,
+    force_clean: bool = False,
+) -> int:
     from convert import convert
 
     input_path = Path(raw).expanduser().resolve()
-    stats = convert(input_path, output, assets_dir)
+    stats = convert(input_path, output, assets_dir, force_clean=force_clean)
     print("OK")
     print("route: local")
     _print_result(stats)
@@ -119,6 +125,7 @@ def run_wps(
     *,
     auto_login: bool = True,
     max_depth: int = 0,
+    keep_work: bool = False,
 ) -> int:
     from wps_to_md import WpsError, normalize_url, share_to_markdown
 
@@ -128,6 +135,7 @@ def run_wps(
             output,
             auto_login=auto_login,
             max_depth=max_depth,
+            keep_work=keep_work,
         )
     except WpsError as e:
         print(f"ERROR: {e}", file=sys.stderr)
@@ -148,6 +156,7 @@ def run_feishu(
     timeout_ms: int = 60000,
     auto_login: bool = True,
     insecure: bool = False,
+    keep_work: bool = False,
 ) -> int:
     from feishu_to_md import FeishuError, normalize_url, share_to_markdown
 
@@ -159,6 +168,7 @@ def run_feishu(
             timeout_ms=timeout_ms,
             auto_login=auto_login,
             insecure=insecure,
+            keep_work=keep_work,
         )
     except FeishuError as e:
         print(f"ERROR: {e}", file=sys.stderr)
@@ -182,6 +192,11 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         default=None,
         help="Assets directory (local files only)",
+    )
+    parser.add_argument(
+        "--force-clean",
+        action="store_true",
+        help="Local files: wipe generated image_* / slide_* / page_* even in a non-empty custom --assets-dir",
     )
     parser.add_argument("--headed", action="store_true", help="Show browser (Feishu)")
     parser.add_argument("--timeout-ms", type=int, default=60000, help="Feishu page timeout")
@@ -207,6 +222,11 @@ def main(argv: list[str] | None = None) -> int:
         metavar="N",
         help="WPS OTL nested conversion depth (0=links only; default 0, or 1 with --recursive)",
     )
+    parser.add_argument(
+        "--keep-work",
+        action="store_true",
+        help="Keep .doc2md_work_* next to the Markdown (WPS/Feishu debug dumps). Default: temp/deleted.",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -221,7 +241,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if kind == "local":
             assets = args.assets_dir.expanduser().resolve() if args.assets_dir else None
-            return run_convert(args.input, output, assets_dir=assets)
+            return run_convert(
+                args.input, output, assets_dir=assets, force_clean=args.force_clean
+            )
         if kind == "wps":
             from wps_to_md import resolve_nested_depth
 
@@ -231,6 +253,7 @@ def main(argv: list[str] | None = None) -> int:
                 output,
                 auto_login=not args.no_login,
                 max_depth=depth,
+                keep_work=args.keep_work,
             )
         return run_feishu(
             args.input,
@@ -239,6 +262,7 @@ def main(argv: list[str] | None = None) -> int:
             timeout_ms=args.timeout_ms,
             auto_login=not args.no_login,
             insecure=args.insecure,
+            keep_work=args.keep_work,
         )
     except ValueError as e:
         print(f"ERROR: {e}", file=sys.stderr)

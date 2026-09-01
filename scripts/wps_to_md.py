@@ -36,6 +36,8 @@ import zipfile
 from pathlib import Path
 from urllib.parse import urlparse
 
+import session as sess
+
 CFG = Path.home() / ".config" / "doc2md"
 DEFAULT_STATE = CFG / "wps_storage_state.json"
 SCRIPTS = Path(__file__).resolve().parent
@@ -837,8 +839,6 @@ def match_images_to_pictures(
 
 
 def ensure_session(url: str | None = None, *, auto_login: bool = True) -> Path:
-    import session as sess
-
     sess.ensure_config_dir()
     if DEFAULT_STATE.is_file():
         sess.tighten_file(DEFAULT_STATE)
@@ -966,8 +966,7 @@ def capture_pdf_preview_pages(page, assets_dir: Path) -> list[Path]:
 
     _, total = parse_pdf_page_label(read_pdf_viewer_label(page))
     assets_dir.mkdir(parents=True, exist_ok=True)
-    for old in assets_dir.glob("page_*.png"):
-        old.unlink()
+    sess.clear_generated_assets(assets_dir, patterns=("page_*.png",))
 
     saved: list[Path] = []
     seen: set[str] = set()
@@ -1041,8 +1040,7 @@ def capture_wpp_preview_pages(page, assets_dir: Path) -> list[Path]:
 
     total = _wpp_total_pages(page)
     assets_dir.mkdir(parents=True, exist_ok=True)
-    for old in assets_dir.glob("page_*.png"):
-        old.unlink()
+    sess.clear_generated_assets(assets_dir, patterns=("page_*.png",))
 
     saved: list[Path] = []
     seen: set[str] = set()
@@ -1209,8 +1207,7 @@ def capture_dbsheet_preview_pages(page, assets_dir: Path) -> list[tuple[Path, st
     page.wait_for_timeout(800)
     items = _dbsheet_sheet_items(page)
     assets_dir.mkdir(parents=True, exist_ok=True)
-    for old in assets_dir.glob("page_*.png"):
-        old.unlink()
+    sess.clear_generated_assets(assets_dir, patterns=("page_*.png",))
 
     def _shot(dest: Path) -> bool:
         clip = _dbsheet_clip(page)
@@ -1369,8 +1366,7 @@ def capture_diagram_preview_pages(page, assets_dir: Path) -> list[tuple[Path, st
             pass
         page.wait_for_timeout(200)
     assets_dir.mkdir(parents=True, exist_ok=True)
-    for old in assets_dir.glob("page_*.png"):
-        old.unlink()
+    sess.clear_generated_assets(assets_dir, patterns=("page_*.png",))
 
     def _shot(dest: Path) -> bool:
         loc = _diagram_shot_target(frame, page)
@@ -1459,8 +1455,7 @@ def capture_board_preview_pages(page, assets_dir: Path) -> list[tuple[Path, str]
             pass
         page.wait_for_timeout(200)
     assets_dir.mkdir(parents=True, exist_ok=True)
-    for old in assets_dir.glob("page_*.png"):
-        old.unlink()
+    sess.clear_generated_assets(assets_dir, patterns=("page_*.png",))
 
     loc = None
     for sel in (".kw_container", "#workspace", "#whiteboard_svg"):
@@ -1575,6 +1570,7 @@ def expand_nested_otl_documents(
     visited: set[str],
     auto_login: bool = False,
     convert_child=None,
+    keep_work: bool = False,
 ) -> list[dict]:
     """Convert unique nested WPSDocument cards one level (or max_depth) down.
 
@@ -1645,6 +1641,7 @@ def expand_nested_otl_documents(
                 auto_login=auto_login,
                 max_depth=max_depth - 1,
                 _visited=visited,
+                keep_work=keep_work,
             )
             rel = dest.relative_to(parent_md.parent).as_posix()
             replacements[child_sid] = rel
@@ -1684,6 +1681,7 @@ def share_to_markdown(
     _login_retried: bool = False,
     max_depth: int = 0,
     _visited: set[str] | None = None,
+    keep_work: bool = False,
 ) -> dict:
     url = normalize_url(url)
     visited = _visited if _visited is not None else set()
@@ -1694,6 +1692,7 @@ def share_to_markdown(
             auto_login=auto_login,
             max_depth=max_depth,
             visited=visited,
+            keep_work=keep_work,
         )
     except _SessionExpired:
         if auto_login and not _login_retried:
@@ -1705,6 +1704,7 @@ def share_to_markdown(
                 _login_retried=True,
                 max_depth=max_depth,
                 _visited=visited,
+                keep_work=keep_work,
             )
         raise WpsError(
             "Failed to load share meta. Session may be expired — re-run wps_login.py."
@@ -1722,6 +1722,40 @@ def _share_to_markdown_once(
     auto_login: bool = True,
     max_depth: int = 0,
     visited: set[str] | None = None,
+    keep_work: bool = False,
+) -> dict:
+    sid = extract_share_id(url)
+    output_md = output_md.expanduser().resolve()
+    output_md.parent.mkdir(parents=True, exist_ok=True)
+    work = sess.make_work_dir(f"wps_{sid}", keep=keep_work, beside=output_md)
+    try:
+        result = _share_to_markdown_body(
+            url,
+            output_md,
+            auto_login=auto_login,
+            max_depth=max_depth,
+            visited=visited,
+            work=work,
+            keep_work=keep_work,
+        )
+        if keep_work:
+            result["work_dir"] = str(work)
+        else:
+            result.pop("otl_json", None)
+        return result
+    finally:
+        sess.cleanup_work_dir(work, keep=keep_work)
+
+
+def _share_to_markdown_body(
+    url: str,
+    output_md: Path,
+    *,
+    auto_login: bool = True,
+    max_depth: int = 0,
+    visited: set[str] | None = None,
+    work: Path,
+    keep_work: bool = False,
 ) -> dict:
     from playwright.sync_api import sync_playwright
     from otl_to_md import convert_file, load_otl
@@ -1732,8 +1766,6 @@ def _share_to_markdown_once(
     state = ensure_session(url, auto_login=auto_login)
     output_md = output_md.expanduser().resolve()
     output_md.parent.mkdir(parents=True, exist_ok=True)
-    work = output_md.parent / f".doc2md_work_{sid}"
-    work.mkdir(parents=True, exist_ok=True)
 
     result: dict = {"url": url, "share_id": sid, "mode": None, "output": str(output_md)}
     nested_otl_path: Path | None = None
@@ -2381,8 +2413,7 @@ def _share_to_markdown_once(
 
         assets_dir = output_md.parent / f"{output_md.stem}_assets"
         assets_dir.mkdir(parents=True, exist_ok=True)
-        for old in assets_dir.glob("image_*"):
-            old.unlink()
+        sess.clear_generated_assets(assets_dir, patterns=("image_*",))
 
         image_files: list[Path | None] = []
         saved = 0
@@ -2420,6 +2451,7 @@ def _share_to_markdown_once(
             max_depth=max_depth,
             visited=seen,
             auto_login=False,
+            keep_work=keep_work,
         )
     return result
 
@@ -2445,6 +2477,11 @@ def main(argv: list[str] | None = None) -> int:
         metavar="N",
         help="Nested OTL conversion depth (0=links only; default 0, or 1 with --recursive)",
     )
+    parser.add_argument(
+        "--keep-work",
+        action="store_true",
+        help="Keep .doc2md_work_* next to the Markdown (OTL JSON / stream URLs). Default: temp dir, deleted after convert.",
+    )
     args = parser.parse_args(argv)
 
     # Allow importing sibling modules
@@ -2462,6 +2499,7 @@ def main(argv: list[str] | None = None) -> int:
             args.output,
             auto_login=not args.no_login,
             max_depth=depth,
+            keep_work=args.keep_work,
         )
     except WpsError as e:
         print(f"ERROR: {e}", file=sys.stderr)

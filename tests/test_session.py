@@ -52,3 +52,54 @@ def test_redact_url_for_log_drops_query():
     assert "SECRET" not in out
     assert "ticket=" not in out
     assert "accounts.feishu.cn/callback" in out
+
+
+def test_make_work_dir_temp_cleaned(tmp_path: Path):
+    out = tmp_path / "out.md"
+    out.write_text("# x\n", encoding="utf-8")
+    work = sess.make_work_dir("wps_abc", keep=False, beside=out)
+    assert work.is_dir()
+    assert work.parent != tmp_path
+    (work / "stream_path.txt").write_text("cdn?token=secret\n", encoding="utf-8")
+    sess.cleanup_work_dir(work, keep=False)
+    assert not work.exists()
+
+
+def test_make_work_dir_keep_beside_output(tmp_path: Path):
+    out = tmp_path / "out.md"
+    out.write_text("# x\n", encoding="utf-8")
+    work = sess.make_work_dir("wps_abc", keep=True, beside=out)
+    assert work.parent == tmp_path
+    assert work.name.startswith(".doc2md_work_")
+    sess.cleanup_work_dir(work, keep=True)
+    assert work.is_dir()
+
+
+def test_clear_generated_assets_skips_directories(tmp_path: Path):
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    (assets / "page_001.png").write_bytes(b"user")
+    (assets / "image_x").mkdir()
+    (assets / "image_001.png").write_bytes(b"gen")
+    (assets / "keep.txt").write_text("ok\n", encoding="utf-8")
+    sess.clear_generated_assets(assets)
+    assert (assets / "image_x").is_dir()
+    assert not (assets / "image_001.png").exists()
+    assert not (assets / "page_001.png").exists()
+    assert (assets / "keep.txt").read_text(encoding="utf-8") == "ok\n"
+
+
+def test_should_clear_generated_assets_custom_nonempty(tmp_path: Path):
+    default = tmp_path / "note_assets"
+    custom = tmp_path / "shared"
+    custom.mkdir()
+    (custom / "page_001.png").write_bytes(b"user")
+    assert sess.should_clear_generated_assets(default, default_dir=default) is True
+    assert sess.should_clear_generated_assets(custom, default_dir=default) is False
+    assert (
+        sess.should_clear_generated_assets(custom, default_dir=default, force=True)
+        is True
+    )
+    empty = tmp_path / "empty_custom"
+    empty.mkdir()
+    assert sess.should_clear_generated_assets(empty, default_dir=default) is True

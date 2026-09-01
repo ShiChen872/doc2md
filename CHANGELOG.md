@@ -2,7 +2,14 @@
 
 ## Unreleased
 
-- Comate install zip is slim (`SKILL.md` + `scripts/` only). Tests stay in git; including them trips the cloud security-audit LLM (504).
+## v0.4.17
+
+- Chrome PDF print: JavaScript off, strict CSP (no script/connect/frame), Playwright aborts `http(s)` during print. Raw HTML in Markdown is not stripped.
+- WPS/Feishu work dirs default to a temp folder and are deleted after convert (success or failure). `--keep-work` keeps `.doc2md_work_*` beside the Markdown.
+- Assets glob cleanup only unlinks files. A non-empty custom `--assets-dir` is not wiped unless `--force-clean`.
+- Skill frontmatter is only `name` / `description`. Comate UI `display_name` is injected by `pack-comate.sh`. Codex UI metadata is `agents/openai.yaml`. WPS/Feishu/PDF/local notes live in `references/`.
+- Comate install zip is slim (`SKILL.md` + `scripts/` + `references/`). Tests stay in git.
+- Deps: drop unused `httpx`; merge duplicate `markdown` pins; declare `pillow`. `pyproject.toml` + GitHub Actions pytest/ruff/compileall.
 
 ## v0.4.16
 

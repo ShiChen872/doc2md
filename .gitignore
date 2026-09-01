@@ -8,3 +8,4 @@ venv/
 .doc2md_work_*/
 .pytest_cache/
 .mypy_cache/
+.ruff_cache/

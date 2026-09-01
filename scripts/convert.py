@@ -19,6 +19,12 @@ import re
 import sys
 from pathlib import Path
 
+SCRIPTS = Path(__file__).resolve().parent
+if str(SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS))
+
+import session as sess
+
 DATA_URI_RE = re.compile(
     r"!\[([^\]]*)\]\((data:image/([a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=\s]+))\)",
     re.MULTILINE,
@@ -293,15 +299,14 @@ def pptx_to_pdf(pptx_path: Path, out_dir: Path) -> Path:
 
 
 def render_pdf_pages(
-    pdf_path: Path, assets_dir: Path, rel_prefix: str, *, dpi: int = 144
+    pdf_path: Path, assets_dir: Path, rel_prefix: str, *, dpi: int = 144, clear: bool = True
 ) -> list[str]:
     """Render each PDF page to PNG. Returns relative markdown paths in page order."""
     import fitz
 
     assets_dir.mkdir(parents=True, exist_ok=True)
-    # clear old slide_*.png
-    for old in assets_dir.glob("slide_*.png"):
-        old.unlink()
+    if clear:
+        sess.clear_generated_assets(assets_dir, patterns=("slide_*.png",))
 
     doc = fitz.open(pdf_path)
     zoom = dpi / 72.0
@@ -351,7 +356,7 @@ def extract_slide_texts(pptx_path: Path) -> list[str]:
 
 
 def convert_pptx_as_slides(
-    pptx_path: Path, assets_dir: Path, rel_prefix: str, *, dpi: int = 144
+    pptx_path: Path, assets_dir: Path, rel_prefix: str, *, dpi: int = 144, clear: bool = True
 ) -> tuple[str, int]:
     """Build Markdown: per-slide theme text + one full-slide screenshot.
 
@@ -360,10 +365,12 @@ def convert_pptx_as_slides(
     import tempfile
 
     texts = extract_slide_texts(pptx_path)
+    if clear:
+        sess.clear_generated_assets(assets_dir, patterns=("image_*", "slide_*"))
 
     with tempfile.TemporaryDirectory(prefix="doc2md_pptx_render_") as tmp:
         pdf = pptx_to_pdf(pptx_path, Path(tmp))
-        slide_refs = render_pdf_pages(pdf, assets_dir, rel_prefix, dpi=dpi)
+        slide_refs = render_pdf_pages(pdf, assets_dir, rel_prefix, dpi=dpi, clear=False)
 
     n = max(len(texts), len(slide_refs))
     blocks: list[str] = [
@@ -450,15 +457,14 @@ def ocr_image_text(image_path: Path) -> tuple[str, str]:
 
 
 def convert_image_file(
-    image_path: Path, assets_dir: Path, rel_prefix: str, *, title: str | None = None
+    image_path: Path, assets_dir: Path, rel_prefix: str, *, title: str | None = None, clear: bool = True
 ) -> tuple[str, int]:
     """Keep the original image in assets and OCR text into Markdown."""
     import shutil
 
     assets_dir.mkdir(parents=True, exist_ok=True)
-    # Clear prior exports for this stem
-    for old in assets_dir.glob("image_*"):
-        old.unlink()
+    if clear:
+        sess.clear_generated_assets(assets_dir, patterns=("image_*",))
 
     ext = image_path.suffix.lower().lstrip(".") or "png"
     if ext == "jpeg":
@@ -484,7 +490,13 @@ def convert_image_file(
     return "\n".join(parts).strip() + "\n", 1
 
 
-def convert(input_path: Path, output_path: Path, assets_dir: Path | None = None) -> dict:
+def convert(
+    input_path: Path,
+    output_path: Path,
+    assets_dir: Path | None = None,
+    *,
+    force_clean: bool = False,
+) -> dict:
     if not input_path.is_file():
         raise FileNotFoundError(f"Input not found: {input_path}")
 
@@ -503,8 +515,14 @@ def convert(input_path: Path, output_path: Path, assets_dir: Path | None = None)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     stem = output_path.stem
+    default_assets = output_path.parent / f"{stem}_assets"
     if assets_dir is None:
-        assets_dir = output_path.parent / f"{stem}_assets"
+        assets_dir = default_assets
+    do_clear = sess.should_clear_generated_assets(
+        assets_dir, default_dir=default_assets, force=force_clean
+    )
+    if do_clear:
+        sess.clear_generated_assets(assets_dir)
     # Relative path from markdown file to assets (POSIX style for markdown)
     try:
         rel_prefix = assets_dir.resolve().relative_to(output_path.parent.resolve()).as_posix()
@@ -519,16 +537,14 @@ def convert(input_path: Path, output_path: Path, assets_dir: Path | None = None)
     image_count = 0
 
     if suffix in IMAGE_SUFFIXES:
-        text, image_count = convert_image_file(input_path, assets_dir, rel_prefix, title=stem)
+        text, image_count = convert_image_file(
+            input_path, assets_dir, rel_prefix, title=stem, clear=False
+        )
     # PPTX: one screenshot per slide + theme text (not per-icon extraction).
     elif suffix in {".pptx", ".pptm"}:
-        # Clear previous icon dumps if re-converting
-        if assets_dir.exists():
-            for old in assets_dir.glob("image_*"):
-                old.unlink()
-            for old in assets_dir.glob("slide_*"):
-                old.unlink()
-        text, pptx_count = convert_pptx_as_slides(input_path, assets_dir, rel_prefix)
+        text, pptx_count = convert_pptx_as_slides(
+            input_path, assets_dir, rel_prefix, clear=False
+        )
     else:
         # keep_data_uris must be passed to convert(), not __init__
         result = md.convert(str(input_path), keep_data_uris=True)
@@ -583,6 +599,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("input", type=Path, help="Input document path")
     parser.add_argument("-o", "--output", type=Path, default=None, help="Output .md path")
     parser.add_argument("--assets-dir", type=Path, default=None, help="Directory for extracted images")
+    parser.add_argument(
+        "--force-clean",
+        action="store_true",
+        help="Wipe generated image_* / slide_* / page_* files even in a non-empty custom --assets-dir",
+    )
     args = parser.parse_args(argv)
 
     input_path = args.input.expanduser().resolve()
@@ -594,7 +615,7 @@ def main(argv: list[str] | None = None) -> int:
     assets_dir = args.assets_dir.expanduser().resolve() if args.assets_dir else None
 
     try:
-        stats = convert(input_path, output_path, assets_dir)
+        stats = convert(input_path, output_path, assets_dir, force_clean=args.force_clean)
     except Exception as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 1

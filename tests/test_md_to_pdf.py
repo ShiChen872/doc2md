@@ -181,6 +181,9 @@ def test_build_print_html_preview_and_video(tmp_path: Path):
     )
     assert "ocr-aux" in html_ocr
     assert "OCR 一行" in html_ocr
+    assert "Content-Security-Policy" in html
+    assert "script-src 'none'" in html
+    assert "connect-src 'none'" in html
 
 
 def test_markdown_file_to_pdf_rejects_missing(tmp_path: Path):
@@ -233,3 +236,31 @@ def test_rewrite_local_urls_compresses_page_png(tmp_path: Path):
     assert "file:" in out
     assert ".jpg" in out
     assert list(cache.glob("*.jpg"))
+
+
+def test_wrap_document_csp_and_print_url_guard():
+    html = mtp.wrap_document("<p>hi</p><script>alert(1)</script>", title="t")
+    assert "Content-Security-Policy" in html
+    assert "script-src 'none'" in html
+    assert "connect-src 'none'" in html
+    assert "<script>alert(1)</script>" in html
+    assert mtp.print_request_allowed("file:///tmp/doc.html")
+    assert mtp.print_request_allowed("data:image/png;base64,xx")
+    assert mtp.print_request_allowed("about:blank")
+    assert not mtp.print_request_allowed("https://example.com/x.png")
+    assert not mtp.print_request_allowed("http://127.0.0.1/x")
+    assert not mtp.print_request_allowed("https://localhost/evil")
+    assert not mtp.print_request_allowed("javascript:alert(1)")
+
+
+def test_build_print_html_keeps_tables_and_scripts(tmp_path: Path):
+    md_path = tmp_path / "note.md"
+    md_path.write_text(
+        "# Hi\n\n<script>fetch('https://evil.example')</script>\n\n"
+        "<table><tr><td>cell</td></tr></table>\n",
+        encoding="utf-8",
+    )
+    html = mtp.build_print_html(md_path.read_text(encoding="utf-8"), md_path)
+    assert "<script>" in html
+    assert "<table>" in html
+    assert "Content-Security-Policy" in html

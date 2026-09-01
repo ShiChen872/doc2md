@@ -34,6 +34,69 @@ def test_parse_docs_legacy():
     assert info["token"] == "doctoken99"
 
 
+def test_parse_board_and_base_urls():
+    board = ftm.parse_feishu_url("https://acme.feishu.cn/board/BOARDTOKEN1")
+    assert board["kind"] == "board"
+    assert board["token"] == "BOARDTOKEN1"
+    base = ftm.parse_feishu_url("https://acme.feishu.cn/base/BASETK")
+    assert base["kind"] == "base"
+    form = ftm.parse_feishu_url(
+        "https://waytoagi.feishu.cn/share/base/form/shrcnYyxqAWdsFq5qBso8mDsOjg"
+    )
+    assert form["kind"] == "base"
+    assert form["token"] == "shrcnYyxqAWdsFq5qBso8mDsOjg"
+    view = ftm.parse_feishu_url(
+        "https://acme.feishu.cn/share/base/view/shrcnViewToken01"
+    )
+    assert view["kind"] == "base"
+    assert view["token"] == "shrcnViewToken01"
+    shared = ftm.parse_feishu_url("https://acme.feishu.cn/share/base/shrcnDirectTok")
+    assert shared["kind"] == "base"
+    assert shared["token"] == "shrcnDirectTok"
+    sheet = ftm.parse_feishu_url("https://acme.feishu.cn/sheets/SHEETTOKEN1")
+    assert sheet["kind"] == "sheet"
+    assert sheet["token"] == "SHEETTOKEN1"
+    mind = ftm.parse_feishu_url("https://acme.feishu.cn/mindnotes/MINDTOKEN1")
+    assert mind["kind"] == "mindnote"
+    assert mind["token"] == "MINDTOKEN1"
+
+
+def test_build_feishu_preview_markdown():
+    board = ftm.build_feishu_preview_markdown(
+        title="方案白板",
+        source_url="https://acme.feishu.cn/board/abc",
+        kind="board",
+        pages=[("wb_assets/page_001.png", "画布")],
+    )
+    assert "飞书画板" in board
+    assert "网页预览分页截图" in board
+    assert "## 画布" in board
+    table = ftm.build_feishu_preview_markdown(
+        title="需求表",
+        source_url="https://acme.feishu.cn/base/xyz",
+        kind="base",
+        pages=[("tbl_assets/page_001.png", "视图")],
+    )
+    assert "多维表格" in table
+    assert "网页预览分页截图" in table
+    sheet = ftm.build_feishu_preview_markdown(
+        title="预算表",
+        source_url="https://acme.feishu.cn/sheets/abc",
+        kind="sheet",
+        pages=[("sh_assets/page_001.png", "表格")],
+    )
+    assert "电子表格" in sheet
+    assert "网页预览分页截图" in sheet
+    mind = ftm.build_feishu_preview_markdown(
+        title="方案脑图",
+        source_url="https://acme.feishu.cn/mindnotes/xyz",
+        kind="mindnote",
+        pages=[("mn_assets/page_001.png", "脑图")],
+    )
+    assert "思维笔记" in mind
+    assert "## 脑图" in mind
+
+
 def test_parse_larksuite():
     info = ftm.parse_feishu_url("https://acme.larksuite.com/wiki/WIKI_TOKEN_1")
     assert info["kind"] == "wiki"
@@ -43,6 +106,20 @@ def test_parse_larksuite():
 def test_parse_invalid_host():
     with pytest.raises(ftm.FeishuError):
         ftm.parse_feishu_url("https://example.com/wiki/abc")
+
+
+def test_parse_rejects_http_and_reserved_tokens():
+    with pytest.raises(ftm.FeishuError, match="HTTPS"):
+        ftm.parse_feishu_url("http://acme.feishu.cn/wiki/DyQPwr5Uui6n0HktnoxcYDrwngd")
+    with pytest.raises(ftm.FeishuError, match="token"):
+        ftm.parse_feishu_url("https://acme.feishu.cn/wiki/space/7123456789")
+    with pytest.raises(ftm.FeishuError, match="token"):
+        ftm.parse_feishu_url("https://acme.feishu.cn/wiki/settings/7999")
+    gallery = ftm.parse_feishu_url(
+        "https://acme.feishu.cn/share/base/gallery/shrcnABCDEF12"
+    )
+    assert gallery["kind"] == "base"
+    assert gallery["token"] == "shrcnABCDEF12"
 
 
 def test_parse_missing_token():
@@ -117,6 +194,85 @@ def test_blocks_to_markdown_basic():
     assert "---" in md
 
 
+def test_heading_and_text_render_children():
+    model = {
+        "title": "折叠",
+        "root": {
+            "id": "root",
+            "type": "page",
+            "children": [
+                {
+                    "id": "h1",
+                    "type": "heading1",
+                    "zone_state": {
+                        "content": {"ops": [{"insert": "第一章", "attributes": {}}]},
+                    },
+                    "snapshot": {"type": "heading1"},
+                    "children": [
+                        {
+                            "id": "folded",
+                            "type": "text",
+                            "zone_state": {
+                                "content": {
+                                    "ops": [{"insert": "折叠里的正文", "attributes": {}}]
+                                },
+                            },
+                            "snapshot": {"type": "text"},
+                            "children": [],
+                        }
+                    ],
+                },
+                {
+                    "id": "p1",
+                    "type": "text",
+                    "zone_state": {
+                        "content": {"ops": [{"insert": "父段落", "attributes": {}}]},
+                    },
+                    "snapshot": {"type": "text"},
+                    "children": [
+                        {
+                            "id": "indented",
+                            "type": "text",
+                            "zone_state": {
+                                "content": {
+                                    "ops": [{"insert": "缩进子段落", "attributes": {}}]
+                                },
+                            },
+                            "snapshot": {"type": "text"},
+                            "children": [],
+                        }
+                    ],
+                },
+            ],
+        },
+    }
+    md = ftm.blocks_to_markdown(model)
+    assert "# 第一章" in md
+    assert "折叠里的正文" in md
+    assert "父段落" in md
+    assert "缩进子段落" in md
+
+
+def test_isv_mermaid_accepts_string_data():
+    md = ftm._render_isv(
+        {
+            "type": "isv",
+            "snapshot": {
+                "block_type_id": "blk_631fefbbae02400430b8f9f4",
+                "data": "graph TD; A-->B",
+            },
+            "children": [],
+        }
+    )
+    assert "```mermaid" in md
+    assert "graph TD; A-->B" in md
+
+
+def test_inline_code_with_backtick():
+    assert "a`b" in ftm._render_inline_piece("a`b", {"inlineCode": True})
+    assert ftm._render_inline_piece("plain", {"inlineCode": True}) == "`plain`"
+
+
 def test_rewrite_placeholders_no_prefix_collision():
     """Short block ids must not corrupt longer ids (image/7 vs image/73)."""
     md = (
@@ -137,6 +293,13 @@ def test_rewrite_placeholders_no_prefix_collision():
     assert "assets/image_003.png" in out
     assert "image_001.png3" not in out
     assert "feishu-asset://" not in out
+
+
+def test_rewrite_placeholders_unmapped_become_comments():
+    md = "![画板](feishu-asset://board/b1/) and ok"
+    out = ftm.rewrite_asset_placeholders(md, {})
+    assert "feishu-asset://" not in out
+    assert "<!-- feishu asset not downloaded: board/b1 -->" in out
 
 
 def test_disable_embed_autoplay_bilibili():
@@ -373,6 +536,64 @@ def test_fallback_code_and_file_blocks():
             "placeholder": "feishu-asset://file/34/",
         }
     ]
+
+
+def test_board_and_bitable_blocks_emit_placeholders():
+    model = {
+        "title": "embeds",
+        "root": {
+            "type": "page",
+            "children": [
+                {
+                    "id": "b1",
+                    "type": "board",
+                    "snapshot": {"type": "board", "board": {"token": "BOARDx"}},
+                    "children": [],
+                },
+                {
+                    "id": "t1",
+                    "type": "bitable",
+                    "snapshot": {"type": "bitable", "bitable": {"token": "BASEx"}},
+                    "children": [],
+                },
+            ],
+        },
+    }
+    md = ftm.blocks_to_markdown(model)
+    assert "![画板](feishu-asset://board/b1/)" in md
+    assert "![多维表格](feishu-asset://bitable/t1/)" in md
+    assert "skipped feishu block: board" not in md
+    assets = ftm.collect_assets(model["root"])
+    assert {a["asset_type"] for a in assets} == {"board", "bitable"}
+
+
+def test_sheet_and_mindnote_blocks_emit_placeholders():
+    model = {
+        "title": "embeds",
+        "root": {
+            "type": "page",
+            "children": [
+                {
+                    "id": "s1",
+                    "type": "sheet",
+                    "snapshot": {"type": "sheet", "sheet": {"token": "SHx"}},
+                    "children": [],
+                },
+                {
+                    "id": "m1",
+                    "type": "mindnote",
+                    "snapshot": {"type": "mindnote", "mindnote": {"token": "MNx"}},
+                    "children": [],
+                },
+            ],
+        },
+    }
+    md = ftm.blocks_to_markdown(model)
+    assert "![电子表格](feishu-asset://sheet/s1/)" in md
+    assert "![思维笔记](feishu-asset://mindnote/m1/)" in md
+    assert "skipped feishu block: sheet" not in md
+    assets = ftm.collect_assets(model["root"])
+    assert {a["asset_type"] for a in assets} == {"sheet", "mindnote"}
 
 
 def test_effective_block_type_unwraps_fallback():

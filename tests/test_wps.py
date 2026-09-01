@@ -44,6 +44,28 @@ def test_extract_share_id_wiki_path():
     ]
 
 
+def test_parse_wps_url_rejects_lookalike_and_http():
+    with pytest.raises(wtm.WpsError, match="HTTPS host"):
+        wtm.parse_wps_url("https://evilwps.cn/l/abc123")
+    with pytest.raises(wtm.WpsError, match="HTTPS host"):
+        wtm.parse_wps_url("https://evil.example/kdocs.cn/l/abc123")
+    with pytest.raises(wtm.WpsError, match="must be HTTPS"):
+        wtm.parse_wps_url("http://365.kdocs.cn/l/abc123")
+    with pytest.raises(wtm.WpsError, match="Unexpected port"):
+        wtm.parse_wps_url("https://365.kdocs.cn:8443/l/abc123")
+    info = wtm.parse_wps_url("user@365.kdocs.cn/l/GoodSid01")
+    assert info["sid"] == "GoodSid01"
+    assert info["host"] == "365.kdocs.cn"
+
+
+def test_is_wps_hostname():
+    assert wtm.is_wps_hostname("365.kdocs.cn")
+    assert wtm.is_wps_hostname("plus.wps.cn")
+    assert wtm.is_wps_hostname("kdocs.cn")
+    assert not wtm.is_wps_hostname("evilwps.cn")
+    assert not wtm.is_wps_hostname("example.com")
+
+
 def test_is_presentation_share():
     assert wtm.is_presentation_share("通威太阳能.pptx")
     assert wtm.is_presentation_share("deck", office_type="p")
@@ -247,7 +269,8 @@ def test_extract_share_id_invalid():
 
 def test_normalize_url_adds_scheme():
     assert wtm.normalize_url("365.kdocs.cn/l/x") == "https://365.kdocs.cn/l/x"
-    assert wtm.normalize_url("https://x") == "https://x"
+    with pytest.raises(wtm.WpsError):
+        wtm.normalize_url("https://example.com/l/x")
 
 
 def test_safe_stem_keeps_cjk_and_alnum():
@@ -421,6 +444,37 @@ def test_fill_images_uses_shapes_when_cdn_incomplete():
     assert aligned[0] == ("png", b"A")
     assert aligned[1] is None
     assert aligned[2] == ("webp", b"C")
+
+
+def _png_bytes(width: int, height: int) -> bytes:
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (width, height), (20, 40, 60)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def test_fill_images_prefers_sharper_shapes_raw():
+    pics = [{"sourceKey": "a"}, {"sourceKey": "b"}]
+    small = _png_bytes(40, 20)
+    large = _png_bytes(400, 200)
+    cdn = [("png", small), ("png", small)]
+    shaped = [("png", large), ("png", small)]
+    aligned, name = wtm.fill_images_cdn_or_shapes(pics, cdn, shaped)
+    assert name == "otl-shapes-preferred"
+    assert aligned[0][1] == large
+    assert aligned[1][1] == small
+
+
+def test_fill_images_keeps_cdn_when_shapes_are_smaller():
+    pics = [{"sourceKey": "a"}]
+    cdn = [("png", _png_bytes(400, 200))]
+    shaped = [("png", _png_bytes(40, 20))]
+    aligned, name = wtm.fill_images_cdn_or_shapes(pics, cdn, shaped)
+    assert name == "otl-picture-matched"
+    assert aligned[0][1] == cdn[0][1]
 
 
 def test_ext_from_shape():

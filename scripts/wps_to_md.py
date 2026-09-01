@@ -14,7 +14,7 @@ Flow:
   3. Try binary download (Office files)
   4. If blocked PDF: screenshot web-viewer `.pdf-page` tiles + OCR → Markdown
   5. If blocked presentation (`.pptx` / office_type=p): screenshot each slide
-  6. If blocked / `.otl` intelligent doc: capture open/otl JSON + CDN images → Markdown
+  6. If blocked / `.otl` intelligent doc: capture open/otl JSON + CDN / shapes raw images → Markdown
   7. If `.dbt` / office_type=d (download notAllowType): screenshot each web-viewer sheet
   8. If `.pof` / `.pom` / `.pos` (WPS 思维导图 / 流程图, ProcessOn iframe): screenshot each canvas
   9. If `.kw` / office_type=b (WPS 白板): screenshot the web canvas (must run before PPT; shares `.slide-uil-view`)
@@ -26,20 +26,26 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import zipfile
 from pathlib import Path
+from urllib.parse import urlparse
 
 CFG = Path.home() / ".config" / "doc2md"
 DEFAULT_STATE = CFG / "wps_storage_state.json"
 SCRIPTS = Path(__file__).resolve().parent
-SHARE_ID_RE = re.compile(
-    r"(?:kdocs\.cn|wps\.cn)/(?:wiki/l|l|view/l|view/media/l)/([A-Za-z0-9_-]+)",
+# Match share id on urlparse().path only. Do not search the full URL string.
+SHARE_PATH_RE = re.compile(
+    r"^/(?:wiki/l|l|view/l|view/media/l)/([A-Za-z0-9_-]+)",
     re.IGNORECASE,
 )
+# Legacy name: tests and callers should use parse_wps_url / extract_share_id.
+SHARE_ID_RE = SHARE_PATH_RE
 SAFE_NAME_RE = re.compile(r"[^\w.\u4e00-\u9fff\-]+")
 MEDIA_EXTS = {
     ".mp4",
@@ -84,18 +90,63 @@ class WpsError(Exception):
     pass
 
 
-def extract_share_id(url: str) -> str:
-    m = SHARE_ID_RE.search(url)
+def is_wps_hostname(host: str) -> bool:
+    host = (host or "").lower().rstrip(".")
+    return (
+        host == "kdocs.cn"
+        or host.endswith(".kdocs.cn")
+        or host == "wps.cn"
+        or host.endswith(".wps.cn")
+    )
+
+
+def check_wps_host(url: str) -> str:
+    """Require HTTPS and a real kdocs/wps hostname. Share path optional (login home)."""
+    raw = (url or "").strip()
+    if not raw:
+        raise WpsError("empty WPS URL")
+    if raw.lower().startswith("http://"):
+        raise WpsError(f"WPS URL must be HTTPS: {url}")
+    if not raw.lower().startswith("https://"):
+        scheme = raw.split("://", 1)[0].lower() if "://" in raw else ""
+        if scheme:
+            raise WpsError(f"WPS URL must be HTTPS: {url}")
+        raw = "https://" + raw
+    parsed = urlparse(raw)
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme != "https" or not is_wps_hostname(host):
+        raise WpsError(f"Not a WPS/kdocs HTTPS host: {url}")
+    if parsed.port not in (None, 443):
+        raise WpsError(f"Unexpected port on WPS URL: {url}")
+    return raw
+
+
+def parse_wps_url(url: str) -> dict[str, str]:
+    """Parse a WPS share URL → {sid, host, path, url}. Rejects HTTP and lookalike hosts."""
+    checked = check_wps_host(url)
+    parsed = urlparse(checked)
+    path = parsed.path or ""
+    m = SHARE_PATH_RE.match(path)
     if not m:
         raise WpsError(f"Cannot parse share id from URL: {url}")
-    return m.group(1)
+    return {
+        "sid": m.group(1),
+        "host": (parsed.hostname or "").lower(),
+        "path": path,
+        "url": checked,
+    }
+
+
+def extract_share_id(url: str) -> str:
+    return parse_wps_url(url)["sid"]
 
 
 def share_id_candidates(url: str) -> list[str]:
     """WPS 知识库 wiki/l/0l<id> often needs the inner share id without the 0l prefix."""
-    sid = extract_share_id(url)
+    info = parse_wps_url(url)
+    sid = info["sid"]
     out = [sid]
-    if re.search(r"/(?:wiki/l)/", url, re.I) and sid.startswith("0l") and len(sid) > 10:
+    if re.search(r"/(?:wiki/l)/", info["path"], re.I) and sid.startswith("0l") and len(sid) > 10:
         out.append(sid[2:])
     return list(dict.fromkeys(out))
 
@@ -246,49 +297,80 @@ def remux_hls_with_ffmpeg(
     ffmpeg_bin: str | None = None,
     timeout_sec: int = 600,
 ) -> dict:
-    """Remux HLS preview stream to MP4 via ffmpeg (-c copy). Returns stats dict."""
+    """Remux HLS preview stream to MP4 via ffmpeg (-c copy). Returns stats dict.
+
+    Prefer a cookie-free run (pre-signed CDN). Only if that fails, pass headers
+    from a 0600 temp file and delete it afterwards.
+    """
     ffmpeg_bin = ffmpeg_bin or find_ffmpeg()
     if not ffmpeg_bin:
         return {"ok": False, "error": "ffmpeg not found"}
     output_mp4.parent.mkdir(parents=True, exist_ok=True)
-    headers = (
-        f"Cookie: {cookie_header}\r\n"
-        f"Referer: {referer}\r\n"
-        "User-Agent: Mozilla/5.0\r\n"
-    )
-    cmd = [
-        ffmpeg_bin,
-        "-y",
-        "-headers",
-        headers,
-        "-i",
-        stream_url,
-        "-c",
-        "copy",
-        "-bsf:a",
-        "aac_adtstoasc",
-        str(output_mp4),
-    ]
-    try:
-        proc = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout_sec,
+
+    def _run(headers: str | None) -> dict:
+        if output_mp4.is_file():
+            try:
+                output_mp4.unlink()
+            except OSError:
+                pass
+        cmd = [ffmpeg_bin, "-y"]
+        if headers:
+            cmd.extend(["-headers", headers])
+        cmd.extend(
+            [
+                "-i",
+                stream_url,
+                "-c",
+                "copy",
+                "-bsf:a",
+                "aac_adtstoasc",
+                str(output_mp4),
+            ]
         )
-    except subprocess.TimeoutExpired:
-        return {"ok": False, "error": f"ffmpeg timeout after {timeout_sec}s"}
-    except Exception as e:
-        return {"ok": False, "error": str(e)[:300]}
-    if proc.returncode != 0 or not output_mp4.is_file() or output_mp4.stat().st_size < 1000:
-        err = (proc.stderr or proc.stdout or "")[-800:]
-        return {"ok": False, "error": err or f"ffmpeg exit {proc.returncode}"}
-    return {
-        "ok": True,
-        "path": str(output_mp4),
-        "bytes": output_mp4.stat().st_size,
-        "ffmpeg": ffmpeg_bin,
-    }
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout_sec,
+            )
+        except subprocess.TimeoutExpired:
+            return {"ok": False, "error": f"ffmpeg timeout after {timeout_sec}s"}
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:300]}
+        if proc.returncode != 0 or not output_mp4.is_file() or output_mp4.stat().st_size < 1000:
+            err = (proc.stderr or proc.stdout or "")[-800:]
+            return {"ok": False, "error": err or f"ffmpeg exit {proc.returncode}"}
+        return {
+            "ok": True,
+            "path": str(output_mp4),
+            "bytes": output_mp4.stat().st_size,
+            "ffmpeg": ffmpeg_bin,
+        }
+
+    first = _run(None)
+    if first.get("ok") or not cookie_header:
+        return first
+
+    header_path: str | None = None
+    try:
+        fd, header_path = tempfile.mkstemp(prefix="doc2md_ffhdr_", suffix=".txt")
+        payload = (
+            f"Cookie: {cookie_header}\r\n"
+            f"Referer: {referer}\r\n"
+            "User-Agent: Mozilla/5.0\r\n"
+        )
+        os.write(fd, payload.encode("utf-8"))
+        os.close(fd)
+        os.chmod(header_path, 0o600)
+        headers = Path(header_path).read_text(encoding="utf-8")
+        return _run(headers)
+    finally:
+        if header_path:
+            try:
+                os.unlink(header_path)
+            except OSError:
+                pass
 
 
 def build_media_markdown(
@@ -410,10 +492,7 @@ def build_pdf_preview_markdown(
 
 
 def normalize_url(url: str) -> str:
-    url = url.strip()
-    if not url.startswith("http"):
-        url = "https://" + url
-    return url
+    return check_wps_host(url)
 
 
 def safe_stem(name: str) -> str:
@@ -582,24 +661,49 @@ def fill_images_cdn_or_shapes(
 ) -> tuple[list[tuple[str, bytes] | None], str]:
     """Choose image list aligned 1:1 with pictures.
 
+    Per slot, keep the sharper of CDN vs `/attachment/shapes` `raw` (more pixels,
+    else more bytes). CDN-only when shapes are missing.
+
     Returns (aligned slots, strategy_name). Slot is None when missing.
     """
     n = len(pictures)
     if n == 0:
         return [], "none"
-    # Prefer CDN when complete; else fill via /attachment/shapes sourceKey map
-    if len(cdn_ordered) >= n:
-        return list(cdn_ordered[:n]), "otl-picture-matched"
-    # Incomplete CDN capture: sourceKey via /attachment/shapes
-    if shaped is not None and any(x is not None for x in shaped):
-        aligned: list[tuple[str, bytes] | None] = []
+    cdn_slots: list[tuple[str, bytes] | None] = list(cdn_ordered[:n]) + [None] * max(
+        0, n - len(cdn_ordered)
+    )
+    cdn_slots = cdn_slots[:n]
+    shape_slots: list[tuple[str, bytes] | None] = [None] * n
+    if shaped is not None:
         for i in range(n):
-            aligned.append(shaped[i] if i < len(shaped) else None)
+            shape_slots[i] = shaped[i] if i < len(shaped) else None
+
+    if not any(shape_slots):
+        if len(cdn_ordered) >= n:
+            return cdn_slots, "otl-picture-matched"
+        return cdn_slots, "otl-picture-matched-partial"
+
+    # Incomplete CDN is not sourceKey-aligned; trust shapes only.
+    if len(cdn_ordered) < n:
+        return list(shape_slots), "otl-shapes-sourcekey"
+
+    aligned: list[tuple[str, bytes] | None] = []
+    from_shapes = 0
+    from_cdn = 0
+    for i in range(n):
+        picked, src = pick_better_image_slot(cdn_slots[i], shape_slots[i])
+        aligned.append(picked)
+        if src == "shapes":
+            from_shapes += 1
+        elif src == "cdn":
+            from_cdn += 1
+    if from_shapes and from_cdn:
+        return aligned, "otl-shapes-preferred"
+    if from_shapes:
         return aligned, "otl-shapes-sourcekey"
-    # Degraded: keep whatever CDN matched (prefix only — may mis-align if gaps
-    # were in the middle; still better than empty for light docs)
-    aligned = list(cdn_ordered) + [None] * max(0, n - len(cdn_ordered))
-    return aligned[:n], "otl-picture-matched-partial"
+    if from_cdn == n:
+        return aligned, "otl-picture-matched"
+    return aligned, "otl-picture-matched-partial"
 
 def image_pixel_size(data: bytes) -> tuple[int, int] | None:
     import io
@@ -611,6 +715,39 @@ def image_pixel_size(data: bytes) -> tuple[int, int] | None:
             return int(im.size[0]), int(im.size[1])
     except Exception:
         return None
+
+
+def _image_slot_metrics(slot: tuple[str, bytes] | None) -> tuple[int, int]:
+    if not slot or not slot[1]:
+        return (0, 0)
+    size = image_pixel_size(slot[1])
+    pixels = int(size[0]) * int(size[1]) if size else 0
+    return (pixels, len(slot[1]))
+
+
+def pick_better_image_slot(
+    cdn: tuple[str, bytes] | None,
+    shaped: tuple[str, bytes] | None,
+) -> tuple[tuple[str, bytes] | None, str]:
+    """Prefer shapes raw when it is sharper (more pixels, else more bytes).
+
+    Returns (slot, "shapes"|"cdn"|"none").
+    """
+    if not shaped:
+        return cdn, ("cdn" if cdn else "none")
+    if not cdn:
+        return shaped, "shapes"
+    c_px, c_n = _image_slot_metrics(cdn)
+    s_px, s_n = _image_slot_metrics(shaped)
+    if s_px and c_px:
+        if s_px != c_px:
+            return (shaped, "shapes") if s_px > c_px else (cdn, "cdn")
+        return (shaped, "shapes") if s_n > c_n else (cdn, "cdn")
+    if s_px and not c_px:
+        return shaped, "shapes"
+    if c_px and not s_px:
+        return cdn, "cdn"
+    return (shaped, "shapes") if s_n > c_n else (cdn, "cdn")
 
 
 def _aspect(w: float, h: float) -> float:
@@ -700,7 +837,11 @@ def match_images_to_pictures(
 
 
 def ensure_session(url: str | None = None, *, auto_login: bool = True) -> Path:
+    import session as sess
+
+    sess.ensure_config_dir()
     if DEFAULT_STATE.is_file():
+        sess.tighten_file(DEFAULT_STATE)
         return DEFAULT_STATE
     if auto_login:
         interactive_wps_login(url or "https://365.kdocs.cn/")
@@ -2220,13 +2361,12 @@ def _share_to_markdown_once(
         cdn_ordered = match_images_to_pictures(pictures, images)
 
         shaped: list[tuple[str, bytes] | None] | None = None
-        if len(cdn_ordered) < len(pictures) and pictures:
-            # CDN incomplete: scroll + /attachment/shapes by sourceKey
+        if pictures:
+            # Always try shapes `raw` so architecture diagrams can beat CDN previews.
             scroll_until_shapes(page, pictures, shapes_map)
             shaped = fetch_images_by_source_keys(
                 context, pictures, shapes_map, referer=url
             )
-            # One more pass for any still-missing keys
             if any(x is None for x in shaped):
                 scroll_until_shapes(page, pictures, shapes_map, max_rounds=40)
                 shaped = fetch_images_by_source_keys(

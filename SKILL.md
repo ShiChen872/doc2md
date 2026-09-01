@@ -3,9 +3,9 @@ name: doc2md
 display_name: 文档转Markdown
 description: >-
   将本地文档、WPS/金山文档（kdocs / 365.kdocs / plus.wps.cn）与飞书/Lark 云文档（wiki / docx）分享链接转为 Markdown，图片提取到本地 assets 目录。
-  支持 docx、pdf、pptx、xlsx、epub、html、图片 OCR、WPS 智能文档（.otl）、WPS 媒体/视频分享（view/media）、WPS 流程图（.pom）/思维导图（.pof）/白板（.kw）及云文档分享链接。
+  支持 docx、pdf、pptx、xlsx、epub、html、图片 OCR、WPS 智能文档（.otl）、WPS 媒体/视频分享（view/media）、WPS 流程图（.pom）/思维导图（.pof）/白板（.kw）、飞书画板/多维表格/电子表格/思维笔记及云文档分享链接。
   使用场景：(1) 云文档/分享链接转 Markdown；(2) 本地 Office/PDF 转 md 并保留图片；(3) OTL / 飞书文档结构化导出；(4) WPS 视频分享转 md（封面 + 预览 mp4）；(5) 已有 Markdown 再转 PDF（用户明确要求时）。
-  触发关键词：转markdown、转md、doc2md、文档转markdown、云文档转md、kdocs转md、plus.wps、wps视频、媒体分享、view/media、飞书转md、feishu转md、otl转md、流程图、思维导图、白板、画板、转pdf、markdown转pdf、anything to markdown。
+  触发关键词：转markdown、转md、doc2md、文档转markdown、云文档转md、kdocs转md、plus.wps、wps视频、媒体分享、view/media、飞书转md、feishu转md、otl转md、流程图、思维导图、白板、画板、电子表格、思维笔记、转pdf、markdown转pdf、anything to markdown。
 ---
 
 # doc2md — documents to Markdown
@@ -83,8 +83,7 @@ Also accepts `.otl.json` (WPS intelligent-doc JSON).
 
 Session files (platform-agnostic):
 
-- `~/.config/doc2md/wps_storage_state.json` (Playwright — preferred)
-- `~/.config/doc2md/wps_cookie.txt` (Cookie string backup)
+- `~/.config/doc2md/wps_storage_state.json` (Playwright; directory 0700, file 0600)
 
 **WPS media notes:** original file download is often denied on link shares. If `ffmpeg` is installed, doc2md remuxes the share-page HLS **preview** stream to `*_assets/preview.mp4` (transcoded, not the original upload). Cover image is saved when available.
 
@@ -96,7 +95,9 @@ Session files (platform-agnostic):
 
 **WPS 流程图 / 思维导图 notes:** `.pom` (流程图) and `.pof` (思维导图) open in a ProcessOn iframe (`#dotviewIframe`). Original download is skipped (not an Office zip). The CLI screenshots each bottom **画布** tab. This is the visible canvas, not a vector dump.
 
-**WPS 白板 notes:** `.kw` (`office_type=b`) is the document-center 白板/画板, not 会议白板. The CLI screenshots the web canvas (`.kw_container`). This viewer also uses `.slide-uil-view`, so it is handled **before** PPT slide capture. Feishu bitable / 画板 still have no dedicated branch.
+**WPS 白板 notes:** `.kw` (`office_type=b`) is the document-center 白板/画板, not 会议白板. The CLI screenshots the web canvas (`.kw_container`). This viewer also uses `.slide-uil-view`, so it is handled **before** PPT slide capture.
+
+**Feishu 画板 / 多维表格 / 电子表格 / 思维笔记 notes:** standalone `/board/`, `/base/` (including `/share/base/` forms), `/sheets/`, and `/mindnotes/` screenshot the visible web viewer. Matching blocks inside a wiki/docx become screenshots instead of an HTML skip comment. Poll / chat cards still skipped.
 
 ### Markdown → PDF (optional)
 
@@ -106,7 +107,7 @@ Only when the user asks for PDF. Markdown stays the source of truth.
 ~/.config/doc2md/venv/bin/python <this-skill>/scripts/md_to_pdf.py /path/to/out.md -o /path/to/out.pdf
 ```
 
-Default engine is **Chrome print** (`--engine chrome`). Adds a **目录** from h2/h3, a header title, and page numbers. Local `*_assets/` images are resolved; `<video>` / iframe become links. WPS PDF-preview exports print **page images only** (OCR stays in the `.md` for search; pass `--keep-ocr` to include a tiny gray OCR block) and skip the TOC so “第 N 页” is not treated as an outline. `--no-toc` skips the table of contents.
+Default engine is **Chrome print** (`--engine chrome`). Adds a **目录** from h2/h3, a header title, and page numbers. Local `*_assets/` images are resolved; `<video>` / iframe become links. WPS PDF-preview exports print **page images only** (OCR stays in the `.md` for search; pass `--keep-ocr` to include a tiny gray OCR block) and skip the TOC so “第 N 页” is not treated as an outline. `--no-toc` skips the table of contents. Page/slide screenshots are JPEG-compressed for print by default (Markdown assets are not modified); `--no-compress` keeps the original PNG in the PDF.
 
 If the user asks for **更好排版 / 品牌样式 / Typst**, use:
 
@@ -122,7 +123,7 @@ Needs the **Typst CLI** on PATH, or `pip install typst` when a wheel exists. Typ
 
 Do not silently fall back to Chrome if Typst was requested. `--theme brand` is navy/accent report styling with no logo artwork. `--theme brand` also works with Chrome. Windows 上没装 Typst 时，继续用默认 `--engine chrome` 即可。
 
-Do **not** call WPS `convert/to/pdf` or automate the WPS client. If Chrome print is not available and Typst was not requested, tell the user they can open the `.md` in WPS and 另存为 PDF (manual GUI, not a CLI engine).
+Do **not** call WPS `convert/to/pdf` or automate the WPS client. `--engine=wps` is **not supported**: WPS has no official Mac/Linux CLI, and Windows COM would drive the client. Use Chrome (default) or Typst. If Chrome print is not available and Typst was not requested, tell the user they can open the `.md` in WPS and 另存为 PDF (manual GUI, not a CLI engine).
 
 ### Feishu / Lark share link
 
@@ -134,7 +135,7 @@ Do **not** call WPS `convert/to/pdf` or automate the WPS client. If Chrome print
 ~/.config/doc2md/venv/bin/python <this-skill>/scripts/feishu_to_md.py 'https://xxx.feishu.cn/wiki/XXXX' -o /path/to/out.md
 ```
 
-Session: `~/.config/doc2md/feishu_storage_state.json` (and `feishu_cookie.txt` backup).
+Session: `~/.config/doc2md/feishu_storage_state.json` (Playwright; 0600). Use `--insecure` only for an enterprise proxy with a custom CA that Chrome does not trust.
 
 ### Scripts
 
@@ -147,7 +148,7 @@ Session: `~/.config/doc2md/feishu_storage_state.json` (and `feishu_cookie.txt` b
 | `wps_download.py` | Share URL → raw file / `.otl.json` only |
 | `otl_to_md.py` | OTL JSON → Markdown |
 | `feishu_login.py` | Headed Chrome login for Feishu/Lark |
-| `feishu_to_md.py` | Feishu wiki/docx URL → Markdown |
+| `feishu_to_md.py` | Feishu wiki/docx/board/base/sheets/mindnotes URL → Markdown |
 | `md_to_pdf.py` | Local Markdown (+ assets) → PDF (Chrome default; optional `--engine typst --theme brand`) |
 
 ## Image handling
@@ -158,7 +159,7 @@ Session: `~/.config/doc2md/feishu_storage_state.json` (and `feishu_cookie.txt` b
 - **PPTX**: per-slide **theme text** + **one full-slide screenshot**.
   PPTX→PDF via `office2pdf-python` (no system Office required); LibreOffice `soffice` is optional fallback; then PyMuPDF renders page PNGs.
 - WPS `.otl` intelligent docs: cannot use drive binary download (`notAllowType`); capture `open/otl` JSON + temporary CDN images via Playwright. **表格**（`outline-table`）渲染为 Markdown 表格（单元格内图片一并输出）；代码块带 `attrs.lang` 语言标签。 Nested file cards (`WPSDocument`) become Markdown links. **Do not recurse by default.** Only if the user asks to 展开嵌套 / 递归 / 把里面的 SOP/卡片也转成 md, pass `--recursive` (depth 1) or `--max-depth N`. Children land in `{stem}_nested/`; failed children keep the original kdocs link. A parent like 《微软替换物料合集》 has 20+ nested SOP/xlsx/pptx — warn that it can take a long time.
-  - 图片：按 OTL `sourceKey` / `imgID` 映射到本地文件（避免表内图导致整篇错位）；优先 CDN 懒加载；若仍缺图，深滚并合并 `/attachment/shapes` 按 `sourceKey` 下载 `raw`，缺 key 时再滚一轮重试。
+  - 图片：按 OTL `sourceKey` / `imgID` 映射到本地文件（避免表内图导致整篇错位）；CDN 懒加载与 `/attachment/shapes` `raw` 都抓，**像素更多的留下**（架构大图优先 raw）。CDN 不齐时仍只按 sourceKey 用 shapes，避免错位。缺 key 时再滚一轮重试。
 
 ## Failure fallback (WPS / Feishu)
 
@@ -166,7 +167,7 @@ Session: `~/.config/doc2md/feishu_storage_state.json` (and `feishu_cookie.txt` b
 2. If still failing (password-protected link, rate limit, unsupported type): ask user to export/download in the product UI, then `convert.py` on the local file.
 3. Do not invent credentials or scrape login forms — only open a browser for the user to log in themselves.
 4. Do not fall back to host WPS APIs, AppleScript, Chrome “JavaScript from Apple Events”, or WPS `convert/to/pdf`.
-5. Feishu: code fences keep language (numeric CodeLanguage mapped); file attachments download when present; bitable / sheet / mindnote / board are still skipped with an HTML comment; legacy `/docs/` may need upgrade to new docx. WPS `.dbt` is handled by `wps_to_md` (view screenshots), not this Feishu skip list.
+5. Feishu: code fences keep language (numeric CodeLanguage mapped); file attachments download when present; **board / bitable / sheet / mindnote** screenshot the visible embed (standalone `/board/` `/base/` `/sheets/` `/mindnotes/` too); poll / chat cards still skipped with an HTML comment; legacy `/docs/` may need upgrade to new docx. WPS `.dbt` is handled by `wps_to_md` (view screenshots), not this Feishu skip list.
 
 ## Portability
 
@@ -176,4 +177,4 @@ Session: `~/.config/doc2md/feishu_storage_state.json` (and `feishu_cookie.txt` b
 
 ## Supported formats
 
-markitdown formats (docx, pptx, xlsx, pdf, html, epub, …) + WPS share links (365 / `.otl` / `plus.wps.cn` media) + Feishu/Lark wiki & docx links. Optional: local Markdown → PDF via `md_to_pdf.py` (Chrome default; Typst brand theme optional).
+markitdown formats (docx, pptx, xlsx, pdf, html, epub, …) + WPS share links (365 / `.otl` / `plus.wps.cn` media) + Feishu/Lark wiki, docx, board, base links. Optional: local Markdown → PDF via `md_to_pdf.py` (Chrome default; Typst brand theme optional).

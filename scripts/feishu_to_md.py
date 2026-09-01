@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert a Feishu/Lark wiki or docx URL to Markdown (+ local images).
+"""Convert a Feishu/Lark wiki, docx, board, base, sheets, or mindnotes URL to Markdown (+ local images).
 
 Usage:
   feishu_to_md.py <url> [-o OUTPUT.md]
@@ -35,9 +35,41 @@ HOST_RE = re.compile(
     r"(?:^|\.)(?:feishu\.cn|larksuite\.com|larkoffice\.com)$",
     re.IGNORECASE,
 )
+FEISHU_RESERVED_TOKENS = frozenset(
+    {
+        "space",
+        "settings",
+        "create",
+        "home",
+        "share",
+        "gallery",
+        "wiki",
+        "docx",
+        "docs",
+        "board",
+        "base",
+        "sheets",
+        "sheet",
+        "mindnotes",
+        "mindnote",
+        "form",
+        "view",
+        "dashboard",
+        "table",
+        "record",
+        "drive",
+    }
+)
 # /wiki/TOKEN or /docx/TOKEN or legacy /docs/TOKEN
+# also standalone 画板 /board/, 多维表格 /base/, 电子表格 /sheets/, 思维笔记 /mindnotes/
 PATH_RE = re.compile(
-    r"/(wiki|docx|docs)/([A-Za-z0-9_-]+)",
+    r"/(wiki|docx|docs|board|base|sheets|sheet|mindnotes|mindnote)/([A-Za-z0-9_-]+)",
+    re.IGNORECASE,
+)
+# SHARE_BASE_RE must be applied before PATH_RE: /share/base/form/TOKEN would
+# otherwise look like kind=base token=form.
+SHARE_BASE_RE = re.compile(
+    r"/share/base/(?:(?:form|view|dashboard|table|record|gallery)/)?([A-Za-z0-9_-]+)",
     re.IGNORECASE,
 )
 
@@ -213,6 +245,34 @@ SERIALIZE_BLOCK_TREE_JS = """
             caption: trimCaption(snapshot.caption),
           },
         };
+      case 'board':
+        return {
+          ...base,
+          board: {
+            token: snapshot.board?.token ?? snapshot.token ?? '',
+          },
+        };
+      case 'bitable':
+        return {
+          ...base,
+          bitable: {
+            token: snapshot.bitable?.token ?? snapshot.token ?? '',
+          },
+        };
+      case 'sheet':
+        return {
+          ...base,
+          sheet: {
+            token: snapshot.sheet?.token ?? snapshot.token ?? '',
+          },
+        };
+      case 'mindnote':
+        return {
+          ...base,
+          mindnote: {
+            token: snapshot.mindnote?.token ?? snapshot.token ?? '',
+          },
+        };
       case 'diagram':
         return { ...base, diagram: {} };
       case 'isv':
@@ -279,7 +339,7 @@ WAIT_PAGE_READY_JS = """
   if (!window.PageMain?.blockManager?.rootBlockModel) {
     return false;
   }
-  const hydratingTypes = new Set(['whiteboard', 'code', 'file']);
+  const hydratingTypes = new Set(['whiteboard', 'board', 'bitable', 'sheet', 'mindnote', 'code', 'file']);
   const isBlockReady = (block) => {
     if (!block) {
       return true;
@@ -516,24 +576,297 @@ def safe_stem(name: str) -> str:
     return SAFE_NAME_RE.sub("_", base).strip("._") or "feishu_document"
 
 
+def check_feishu_host(url: str) -> str:
+    """HTTPS + Feishu/Lark host. Document token optional (login home pages)."""
+    raw = normalize_url(url)
+    parsed = urlparse(raw)
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme != "https" or not host or not HOST_RE.search(host):
+        raise FeishuError(f"Not a Feishu/Lark HTTPS URL: {url}")
+    if parsed.port not in (None, 443):
+        raise FeishuError(f"Unexpected port on Feishu URL: {url}")
+    return raw
+
+
 def parse_feishu_url(url: str) -> dict[str, str]:
-    """Parse wiki/docx/docs URL → {kind, token, host, url}."""
-    url = normalize_url(url)
+    """Parse wiki/docx/docs/board/base/sheets/mindnotes URL → {kind, token, host, url}."""
+    url = check_feishu_host(url)
     parsed = urlparse(url)
     host = (parsed.hostname or "").lower()
-    if not host or not HOST_RE.search(host):
-        raise FeishuError(f"Not a Feishu/Lark URL: {url}")
-    m = PATH_RE.search(parsed.path or "")
-    if not m:
-        raise FeishuError(
-            f"Cannot parse document token from URL (need /wiki/, /docx/, or /docs/): {url}"
-        )
-    kind = m.group(1).lower()
-    token = m.group(2)
-    if kind == "docs":
-        # Legacy docs are limited; still return kind so caller can warn
+    path = parsed.path or ""
+    m2 = SHARE_BASE_RE.search(path)
+    if m2 and m2.group(1).lower() not in FEISHU_RESERVED_TOKENS:
+        return {"kind": "base", "token": m2.group(1), "host": host, "url": url}
+    m = PATH_RE.search(path)
+    if m:
+        kind = m.group(1).lower()
+        token = m.group(2)
+        if token.lower() in FEISHU_RESERVED_TOKENS:
+            raise FeishuError(f"Cannot parse document token from URL: {url}")
+        kind = {
+            "sheets": "sheet",
+            "sheet": "sheet",
+            "mindnotes": "mindnote",
+            "mindnote": "mindnote",
+        }.get(kind, kind)
+        if kind == "docs":
+            # Legacy docs are limited; still return kind so caller can warn
+            pass
+        return {"kind": kind, "token": token, "host": host, "url": url}
+    raise FeishuError(
+        "Cannot parse document token from URL "
+        "(need /wiki/, /docx/, /docs/, /board/, /base/, /sheets/, or /mindnotes/): "
+        f"{url}"
+    )
+
+
+BOARD_VIEW_SEL = (
+    ".tl-canvas, [class*='ccm-board'], #ccm-board, "
+    "iframe[src*='/board/'], [class*='universe-board'], .board-host"
+)
+BITABLE_VIEW_SEL = (
+    ".bitable-form-share-wrapper, [class*='bitable-container'], "
+    "[class*='bitable-view'], [class*='bitable-form'], "
+    ".suite-bitable, [class*='base-table']"
+)
+SHEET_VIEW_SEL = (
+    ".fortune-container, .fortune-sheet, .suite-spreadsheet, "
+    "[class*='spreadsheet-container'], [class*='sheet-container'], "
+    "#sheet-container, iframe[src*='/sheets/']"
+)
+MINDNOTE_VIEW_SEL = (
+    "[class*='mindnote'], [class*='MindNote'], "
+    ".jsmind, [class*='jsmind'], "
+    "iframe[src*='/mindnotes/'], iframe[src*='/mindnote/']"
+)
+
+PREVIEW_META: dict[str, dict[str, str]] = {
+    "board": {
+        "sel": BOARD_VIEW_SEL,
+        "heading": "画布",
+        "type_line": "> 类型: 飞书画板分享（网页预览分页截图；可见画布）",
+        "mode": "board-preview",
+    },
+    "base": {
+        "sel": BITABLE_VIEW_SEL,
+        "heading": "视图",
+        "type_line": "> 类型: 飞书多维表格分享（网页预览分页截图；可见视图）",
+        "mode": "bitable-preview",
+    },
+    "sheet": {
+        "sel": SHEET_VIEW_SEL,
+        "heading": "表格",
+        "type_line": "> 类型: 飞书电子表格分享（网页预览分页截图；可见工作表）",
+        "mode": "sheet-preview",
+    },
+    "mindnote": {
+        "sel": MINDNOTE_VIEW_SEL,
+        "heading": "脑图",
+        "type_line": "> 类型: 飞书思维笔记分享（网页预览分页截图；可见脑图）",
+        "mode": "mindnote-preview",
+    },
+}
+
+EMBED_SCREENSHOT_TYPES = {"board", "bitable", "whiteboard", "sheet", "mindnote"}
+ASSET_BLOCK_TYPES = {
+    "image",
+    "file",
+    "whiteboard",
+    "diagram",
+    "board",
+    "bitable",
+    "sheet",
+    "mindnote",
+}
+
+
+def _page_looks_like_board(page: Any) -> bool:
+    try:
+        return page.locator(BOARD_VIEW_SEL).count() > 0
+    except Exception:
+        return False
+
+
+def _page_looks_like_bitable(page: Any) -> bool:
+    try:
+        return page.locator(BITABLE_VIEW_SEL).count() > 0
+    except Exception:
+        return False
+
+
+def _page_looks_like_sheet(page: Any) -> bool:
+    try:
+        return page.locator(SHEET_VIEW_SEL).count() > 0
+    except Exception:
+        return False
+
+
+def _page_looks_like_mindnote(page: Any) -> bool:
+    try:
+        return page.locator(MINDNOTE_VIEW_SEL).count() > 0
+    except Exception:
+        return False
+
+
+def _dismiss_feishu_guides(page: Any) -> None:
+    for _ in range(2):
+        try:
+            page.keyboard.press("Escape")
+        except Exception:
+            pass
+        page.wait_for_timeout(150)
+    for label in ("我知道了", "暂不需要", "关闭"):
+        try:
+            loc = page.get_by_text(label, exact=True)
+            if loc.count():
+                loc.first.click(timeout=1200)
+                page.wait_for_timeout(200)
+        except Exception:
+            continue
+
+
+def build_feishu_preview_markdown(
+    *,
+    title: str,
+    source_url: str,
+    kind: str,
+    pages: list[tuple[str, str]],
+) -> str:
+    """Markdown for a Feishu board / bitable / sheet / mindnote share captured from the web viewer."""
+    meta = PREVIEW_META.get(kind) or PREVIEW_META["base"]
+    type_line = meta["type_line"]
+    default_h = meta["heading"]
+    lines = [
+        f"> 来源: {source_url}",
+        type_line,
+        "",
+        f"# {title}",
+        "",
+    ]
+    for i, (rel, heading) in enumerate(pages, 1):
+        lines.append(f"## {heading or f'{default_h} {i}'}")
+        lines.append("")
+        lines.append(f"![]({rel})")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _screenshot_locator(page: Any, dest: Path, loc) -> bool:
+    try:
+        box = loc.bounding_box()
+    except Exception:
+        box = None
+    try:
+        if box and (box.get("width", 0) > 2400 or box.get("height", 0) > 2400):
+            vp = page.viewport_size or {"width": 1400, "height": 900}
+            clip = {
+                "x": max(0, int(box["x"])),
+                "y": max(0, int(box["y"])),
+                "width": min(int(box["width"]), int(vp["width"])),
+                "height": min(int(box["height"]), int(vp["height"])),
+            }
+            if clip["width"] < 80 or clip["height"] < 80:
+                return False
+            page.screenshot(path=str(dest), clip=clip)
+        else:
+            loc.screenshot(path=str(dest))
+    except Exception:
+        return False
+    return dest.is_file() and dest.stat().st_size >= 500
+
+
+def screenshot_feishu_block(page: Any, block_id: str, dest: Path) -> bool:
+    for sel in (
+        f'[data-block-id="{block_id}"]',
+        f'[data-record-id="{block_id}"]',
+    ):
+        loc = page.locator(sel).first
+        try:
+            if loc.count() == 0:
+                continue
+        except Exception:
+            continue
+        if _screenshot_locator(page, dest, loc):
+            return True
+    return False
+
+
+def capture_feishu_preview_pages(
+    page: Any, assets_dir: Path, *, kind: str
+) -> list[tuple[Path, str]]:
+    """Screenshot the visible Feishu board / bitable / sheet / mindnote viewer."""
+    try:
+        page.set_viewport_size({"width": 1400, "height": 900})
+    except Exception:
         pass
-    return {"kind": kind, "token": token, "host": host, "url": url}
+    meta = PREVIEW_META.get(kind)
+    if not meta:
+        return []
+    sel = meta["sel"]
+    try:
+        page.wait_for_selector(sel, timeout=20000)
+    except Exception:
+        return []
+    _dismiss_feishu_guides(page)
+    page.wait_for_timeout(600)
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    for old in assets_dir.glob("page_*.png"):
+        old.unlink()
+    loc = None
+    for candidate in (sel + ", #mainBox").split(","):
+        cand = page.locator(candidate.strip()).first
+        try:
+            if cand.count() == 0:
+                continue
+            box = cand.bounding_box()
+        except Exception:
+            continue
+        if box and box.get("width", 0) >= 80 and box.get("height", 0) >= 80:
+            loc = cand
+            break
+    dest = assets_dir / "page_001.png"
+    if loc is None:
+        try:
+            page.screenshot(path=str(dest))
+        except Exception:
+            return []
+    elif not _screenshot_locator(page, dest, loc):
+        dest.unlink(missing_ok=True)
+        return []
+    if not dest.is_file() or dest.stat().st_size < 500:
+        dest.unlink(missing_ok=True)
+        return []
+    heading = meta["heading"]
+    return [(dest, heading)]
+
+
+def write_feishu_preview_markdown(
+    *,
+    title: str,
+    source_url: str,
+    output_md: Path,
+    page_files: list[Path],
+    kind: str,
+    headings: list[str] | None = None,
+) -> dict[str, Any]:
+    assets_dir = page_files[0].parent if page_files else output_md.parent
+    pages: list[tuple[str, str]] = []
+    for i, img in enumerate(page_files):
+        rel = f"{assets_dir.name}/{img.name}"
+        heading = ""
+        if headings and i < len(headings):
+            heading = str(headings[i] or "").strip()
+        pages.append((rel, heading))
+    md = build_feishu_preview_markdown(
+        title=title, source_url=source_url, kind=kind, pages=pages
+    )
+    output_md.parent.mkdir(parents=True, exist_ok=True)
+    output_md.write_text(md, encoding="utf-8")
+    return {
+        "pages": len(page_files),
+        "markdown_chars": len(md),
+        "assets_dir": str(assets_dir),
+    }
 
 
 def _iter_children(block: dict[str, Any]) -> list[dict[str, Any]]:
@@ -652,7 +985,9 @@ def _render_inline_piece(insert: str, attributes: dict[str, Any]) -> str:
     if equation:
         return f"${equation}$"
     if attributes.get("inlineCode") is not None:
-        return f"`{insert.replace('`', '\\`')}`"
+        if "`" in insert:
+            return "`` " + insert + " ``"
+        return "`" + insert + "`"
     text = _escape_markdown(insert).replace("\n", "  \n")
     if attributes.get("underline") is not None and text:
         text = f"<u>{text}</u>"
@@ -749,6 +1084,14 @@ def _render_asset_block(block: dict[str, Any], indent: int = 0) -> str:
         alt = _clean_text(
             ((block.get("snapshot") or {}).get("whiteboard") or {}).get("caption") or "whiteboard"
         )
+    elif block_type == "board":
+        alt = "画板"
+    elif block_type == "bitable":
+        alt = "多维表格"
+    elif block_type == "sheet":
+        alt = "电子表格"
+    elif block_type == "mindnote":
+        alt = "思维笔记"
     elif block_type == "diagram":
         alt = "diagram"
     return f"{' ' * indent}![{alt}]({url})".rstrip()
@@ -786,7 +1129,7 @@ def _extract_plain_text(block: dict[str, Any]) -> str:
     if block_type == "table_cell":
         texts = [_extract_plain_text(c) for c in _iter_children(block)]
         return "<br>".join(t for t in texts if t)
-    if block_type in {"image", "whiteboard", "diagram"}:
+    if block_type in {"image", "whiteboard", "diagram", "board", "bitable", "sheet", "mindnote"}:
         return _clean_text(_render_asset_block(block))
     if block_type == "file":
         return _clean_text(((block.get("snapshot") or {}).get("file") or {}).get("name") or "附件")
@@ -840,10 +1183,19 @@ def _render_list_item(block: dict[str, Any], indent: int = 0) -> str:
 def _render_isv(block: dict[str, Any], indent: int = 0) -> str:
     snapshot = block.get("snapshot") or {}
     block_type_id = snapshot.get("block_type_id") or ""
-    data = snapshot.get("data") or {}
+    raw = snapshot.get("data")
+    mermaid_src = ""
+    data: dict[str, Any]
+    if isinstance(raw, str):
+        mermaid_src = raw
+        data = {}
+    elif isinstance(raw, dict):
+        data = raw
+    else:
+        data = {}
     # Mermaid ISV
     if block_type_id == "blk_631fefbbae02400430b8f9f4":
-        mermaid = _clean_text((data or {}).get("data") or "", keep_newline=True)
+        mermaid = _clean_text(mermaid_src or data.get("data") or "", keep_newline=True)
         if mermaid:
             return f"{' ' * indent}```mermaid\n{mermaid}\n{' ' * indent}```"
     return f"{' ' * indent}<!-- unsupported feishu block: isv {block_type_id} -->"
@@ -859,11 +1211,19 @@ def _render_block(block: dict[str, Any], indent: int = 0) -> str:
         level = int(block_type[-1])
         if 1 <= level <= 6:
             content = _render_inline_ops(block)
-            return f"{' ' * indent}{'#' * level} {content}".rstrip()
+            first = f"{' ' * indent}{'#' * level} {content}".rstrip()
+            child = _render_blocks(_iter_children(block), indent)
+            if child and first:
+                return f"{first}\n\n{child}"
+            return first or child
 
     if block_type in {"text", "heading7", "heading8", "heading9"}:
         content = _render_inline_ops(block)
-        return (" " * indent + content) if content else ""
+        first = (" " * indent + content) if content else ""
+        child = _render_blocks(_iter_children(block), indent)
+        if child and first:
+            return f"{first}\n\n{child}"
+        return first or child
 
     if block_type == "code":
         language = resolve_code_language((block.get("snapshot") or {}).get("language"))
@@ -896,7 +1256,7 @@ def _render_block(block: dict[str, Any], indent: int = 0) -> str:
     if block_type == "grid":
         return _render_blocks(_iter_children(block), indent)
 
-    if block_type in {"image", "file", "whiteboard", "diagram"}:
+    if block_type in ASSET_BLOCK_TYPES:
         return _render_asset_block(block, indent)
 
     if block_type == "iframe":
@@ -923,10 +1283,6 @@ def _render_block(block: dict[str, Any], indent: int = 0) -> str:
         return _render_isv(block, indent)
 
     if block_type in {
-        "bitable",
-        "sheet",
-        "mindnote",
-        "board",
         "chat_card",
         "poll",
     }:
@@ -997,7 +1353,7 @@ def collect_assets(block: dict[str, Any]) -> list[dict[str, str]]:
     assets: list[dict[str, str]] = []
     block_type = effective_block_type(block)
     block_id = block.get("id")
-    if block_type in {"image", "file", "whiteboard", "diagram"} and block_id is not None:
+    if block_type in ASSET_BLOCK_TYPES and block_id is not None:
         assets.append(
             {
                 "asset_type": block_type,
@@ -1017,16 +1373,25 @@ def _ext_from_name(name: str, default: str = ".png") -> str:
     return default
 
 
+ASSET_PLACEHOLDER_RE = re.compile(r"feishu-asset://[A-Za-z0-9_-]+/[A-Za-z0-9_-]+/")
+
+
 def rewrite_asset_placeholders(markdown: str, mapping: dict[str, str]) -> str:
     """Replace placeholders with local paths without prefix collisions.
 
     Longer placeholders first so a short id never eats into a longer one
-    (defense in depth; placeholders also end with `/`).
+    (defense in depth; placeholders also end with `/`). Unmapped placeholders
+    become HTML comments instead of leftover feishu-asset:// links.
     """
     rewritten = markdown
     for placeholder, rel in sorted(mapping.items(), key=lambda kv: len(kv[0]), reverse=True):
         rewritten = rewritten.replace(placeholder, rel)
-    return rewritten
+
+    def leftover(match: re.Match[str]) -> str:
+        body = match.group(0)[len("feishu-asset://") :].rstrip("/")
+        return f"<!-- feishu asset not downloaded: {body} -->"
+
+    return ASSET_PLACEHOLDER_RE.sub(leftover, rewritten)
 
 
 def download_assets(page: Any, model: dict[str, Any], assets_dir: Path, markdown: str) -> tuple[str, int]:
@@ -1045,6 +1410,12 @@ def download_assets(page: Any, model: dict[str, Any], assets_dir: Path, markdown
             print(f"WARN asset {asset['block_id']}: {e}", file=sys.stderr)
             payload = None
         if not payload or not payload.get("base64"):
+            dest = assets_dir / f"image_{index:03d}.png"
+            if asset["asset_type"] in EMBED_SCREENSHOT_TYPES and screenshot_feishu_block(
+                page, str(asset["block_id"]), dest
+            ):
+                mapping[asset["placeholder"]] = f"{assets_dir.name}/{dest.name}"
+                saved += 1
             continue
         raw_name = str(payload.get("file_name") or f"{asset['asset_type']}-{asset['block_id']}.png")
         ext = _ext_from_name(raw_name)
@@ -1141,12 +1512,18 @@ def share_to_markdown(
     retries: int = 3,
     auto_login: bool = True,
     _login_retried: bool = False,
+    insecure: bool = False,
 ) -> dict[str, Any]:
     from playwright.sync_api import sync_playwright
+
+    import session as sess
 
     info = parse_feishu_url(url)
     url = info["url"]
     state_path = storage_state or DEFAULT_STATE
+    sess.ensure_config_dir()
+    if state_path.is_file():
+        sess.tighten_file(state_path)
     if info["kind"] == "docs":
         print(
             "WARN: legacy /docs/ URLs often need upgrade; will try PageMain if available",
@@ -1157,7 +1534,13 @@ def share_to_markdown(
     relogin = False
     with sync_playwright() as p:
         browser = p.chromium.launch(channel="chrome", headless=headless)
-        context_kwargs: dict[str, Any] = {"ignore_https_errors": True}
+        context_kwargs: dict[str, Any] = {}
+        if insecure:
+            print(
+                "WARN: --insecure disables HTTPS certificate checks",
+                file=sys.stderr,
+            )
+            context_kwargs["ignore_https_errors"] = True
         if state_path.is_file():
             context_kwargs["storage_state"] = str(state_path)
         context = browser.new_context(**context_kwargs)
@@ -1183,6 +1566,71 @@ def share_to_markdown(
                     )
                     relogin = auto_login and not _login_retried
                     break
+
+                page.wait_for_timeout(1500)
+                _dismiss_feishu_guides(page)
+                has_pagemain = False
+                try:
+                    has_pagemain = bool(
+                        page.evaluate(
+                            "() => Boolean(window.PageMain?.blockManager?.rootBlockModel)"
+                        )
+                    )
+                except Exception:
+                    has_pagemain = False
+                preview_kind = ""
+                if info["kind"] in PREVIEW_META:
+                    preview_kind = info["kind"]
+                elif not has_pagemain:
+                    if _page_looks_like_board(page):
+                        preview_kind = "board"
+                    elif _page_looks_like_bitable(page):
+                        preview_kind = "base"
+                    elif _page_looks_like_sheet(page):
+                        preview_kind = "sheet"
+                    elif _page_looks_like_mindnote(page):
+                        preview_kind = "mindnote"
+                if preview_kind:
+                    title = _clean_text(page.title() or "") or info["token"]
+                    stem = safe_stem(title.split(" - ")[0] if title else info["token"])
+                    if output_md.suffix.lower() != ".md":
+                        output_md = output_md.with_suffix(".md")
+                    if output_md.name in {"out.md", "output.md"} or output_md.stem == "feishu_out":
+                        output_md = output_md.with_name(f"{stem}.md")
+                    assets_dir = output_md.parent / f"{output_md.stem}_assets"
+                    captured = capture_feishu_preview_pages(
+                        page, assets_dir, kind=preview_kind
+                    )
+                    if not captured:
+                        raise FeishuError(
+                            "Could not capture the Feishu viewer. "
+                            "Re-run feishu_login.py, or export an image from the Feishu UI."
+                        )
+                    stats = write_feishu_preview_markdown(
+                        title=stem,
+                        source_url=url,
+                        output_md=output_md,
+                        page_files=[p for p, _ in captured],
+                        kind=preview_kind,
+                        headings=[name for _, name in captured],
+                    )
+                    result = {
+                        "ok": True,
+                        "url": url,
+                        "kind": info["kind"],
+                        "mode": (PREVIEW_META.get(preview_kind) or {}).get(
+                            "mode", f"{preview_kind}-preview"
+                        ),
+                        "token": info["token"],
+                        "title": title,
+                        "output": str(output_md),
+                        "assets_dir": stats.get("assets_dir"),
+                        "images_saved": stats.get("pages"),
+                        "markdown_chars": stats.get("markdown_chars"),
+                        "storage_state": str(state_path) if state_path.is_file() else None,
+                    }
+                    browser.close()
+                    return result
 
                 model = extract_model_from_page(page, timeout_ms=timeout_ms)
                 title = _clean_text(model.get("title") or "") or info["token"]
@@ -1247,6 +1695,7 @@ def share_to_markdown(
             retries=retries,
             auto_login=auto_login,
             _login_retried=True,
+            insecure=insecure,
         )
     raise FeishuError(str(last_err) if last_err else "conversion failed")
 
@@ -1267,6 +1716,11 @@ def main(argv: list[str] | None = None) -> int:
         "--no-login",
         action="store_true",
         help="Do not open Chrome if the Feishu session is missing or expired",
+    )
+    parser.add_argument(
+        "--insecure",
+        action="store_true",
+        help="Disable HTTPS certificate checks (enterprise MITM/proxy only)",
     )
     args = parser.parse_args(argv)
 
@@ -1289,6 +1743,7 @@ def main(argv: list[str] | None = None) -> int:
             headless=not args.headed,
             timeout_ms=args.timeout_ms,
             auto_login=not args.no_login,
+            insecure=args.insecure,
         )
     except FeishuError as e:
         print(f"ERROR: {e}", file=sys.stderr)

@@ -25,8 +25,7 @@ DATA_URI_RE = re.compile(
 )
 # Also catch bare data URIs in HTML-ish or markitdown Image: forms
 BARE_DATA_URI_RE = re.compile(
-    r"(data:image/([a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=\s]+))",
-    re.MULTILINE,
+    r"(data:image/([a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=]+))",
 )
 
 EXT_MAP = {

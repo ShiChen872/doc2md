@@ -193,3 +193,43 @@ def test_markdown_file_to_pdf_rejects_non_md(tmp_path: Path):
     f.write_text("x", encoding="utf-8")
     with pytest.raises(mtp.MdPdfError, match="Expected a .md file"):
         mtp.markdown_file_to_pdf(f)
+
+
+def test_engine_wps_is_rejected(tmp_path: Path):
+    md = tmp_path / "note.md"
+    md.write_text("# Hi\n", encoding="utf-8")
+    with pytest.raises(mtp.MdPdfError, match="not available"):
+        mtp.markdown_file_to_pdf(md, engine="wps")
+
+
+def test_should_compress_print_image():
+    assert mtp.should_compress_print_image(Path("page_001.png"))
+    assert mtp.should_compress_print_image(Path("slide_012.png"))
+    assert mtp.should_compress_print_image(Path("pdf_page_003.png"))
+    assert not mtp.should_compress_print_image(Path("image_001.png"))
+    assert mtp.should_compress_print_image(Path("image_001.png"), compress_all=True)
+
+
+def test_compress_image_for_print(tmp_path: Path):
+    src = Path(__file__).resolve().parent / "fixtures" / "page_screenshot.png"
+    dest = tmp_path / "page.jpg"
+    assert mtp.compress_image_for_print(src, dest)
+    assert dest.stat().st_size < src.stat().st_size
+    staged = mtp.stage_print_image(src, tmp_path / "cache")
+    assert staged.suffix.lower() == ".jpg"
+    assert staged.stat().st_size < src.stat().st_size
+
+
+def test_rewrite_local_urls_compresses_page_png(tmp_path: Path):
+    assets = tmp_path / "doc_assets"
+    assets.mkdir()
+    src = assets / "page_001.png"
+    src.write_bytes(
+        (Path(__file__).resolve().parent / "fixtures" / "page_screenshot.png").read_bytes()
+    )
+    cache = tmp_path / "print_cache"
+    html = '<img src="doc_assets/page_001.png"/>'
+    out = mtp.rewrite_local_urls(html, tmp_path, print_cache=cache)
+    assert "file:" in out
+    assert ".jpg" in out
+    assert list(cache.glob("*.jpg"))

@@ -60,6 +60,16 @@ def test_extract_data_uris_no_uris(tmp_path: Path):
     assert out == md
 
 
+def test_bare_data_uri_does_not_swallow_following_text(tmp_path: Path):
+    b64 = base64.b64encode(b"AAAA").decode()
+    md = f"data:image/png;base64,{b64}\n\nHello world\n\nSummary here"
+    out, n = conv.extract_data_uris(md, tmp_path, "assets")
+    assert n == 1
+    assert "Hello world" in out
+    assert "Summary here" in out
+    assert "data:image" not in out
+
+
 def test_sort_ocr_lines_top_to_bottom():
     # boxes: [x0,y0,x1,y0,x1,y1,x0,y1]
     items = [

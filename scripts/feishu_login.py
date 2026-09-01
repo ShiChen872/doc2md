@@ -6,7 +6,6 @@ Usage:
 
 Saves:
   ~/.config/doc2md/feishu_storage_state.json   (Playwright storage)
-  ~/.config/doc2md/feishu_cookie.txt           (Cookie header string — fallback)
 
 Requires: playwright + system Chrome (channel=chrome).
 """
@@ -18,9 +17,11 @@ import sys
 import time
 from pathlib import Path
 
-CFG = Path.home() / ".config" / "doc2md"
+import session as sess
+from feishu_to_md import FeishuError, check_feishu_host
+
+CFG = sess.CFG
 DEFAULT_STATE = CFG / "feishu_storage_state.json"
-DEFAULT_COOKIE = CFG / "feishu_cookie.txt"
 DEFAULT_URL = "https://www.feishu.cn/"
 
 SESSION_COOKIE_NAMES = {
@@ -54,7 +55,6 @@ def _has_session(cookies: list[dict]) -> bool:
     names = {c.get("name") for c in cookies}
     if names & SESSION_COOKIE_NAMES:
         return True
-    # Logged-in suite cookies often include domain-scoped session without exact name match
     for c in cookies:
         domain = (c.get("domain") or "").lower()
         name = c.get("name") or ""
@@ -73,7 +73,12 @@ def _has_session(cookies: list[dict]) -> bool:
 def run_login(url: str, timeout_sec: int = 300) -> None:
     from playwright.sync_api import sync_playwright
 
-    CFG.mkdir(parents=True, exist_ok=True)
+    try:
+        url = check_feishu_host(url or DEFAULT_URL)
+    except FeishuError as e:
+        raise LoginError(str(e)) from e
+
+    sess.ensure_config_dir()
     print("=" * 60)
     print("请在弹出的 Chrome 窗口中完成飞书登录（扫码 / 手机 / SSO 均可）。")
     print("检测到会话 Cookie 且离开登录页后，会自动保存并关闭窗口。")
@@ -96,28 +101,12 @@ def run_login(url: str, timeout_sec: int = 300) -> None:
             has_sid = _has_session(cookies)
             on_login = _on_login_page(cur)
             print(
-                f"wait url={cur[:120]} cookies={len(cookies)} "
+                f"wait url={sess.redact_url_for_log(cur)} cookies={len(cookies)} "
                 f"session={has_sid} on_login={on_login}"
             )
             if has_sid and not on_login:
-                context.storage_state(path=str(DEFAULT_STATE))
-                preferred = [
-                    c
-                    for c in cookies
-                    if any(
-                        x in (c.get("domain") or "")
-                        for x in ("feishu.cn", "larksuite.com", "larkoffice.com", "bytedance.com")
-                    )
-                ]
-                use = preferred or cookies
-                by_name: dict[str, str] = {}
-                for c in use:
-                    by_name[c["name"]] = c["value"]
-                cookie_str = "; ".join(f"{k}={v}" for k, v in by_name.items())
-                DEFAULT_COOKIE.write_text(cookie_str + "\n", encoding="utf-8")
+                sess.write_storage_state(context, DEFAULT_STATE)
                 print(f"OK wrote {DEFAULT_STATE}")
-                print(f"OK wrote {DEFAULT_COOKIE} ({len(by_name)} cookies)")
-                print(f"cookie_names sample: {sorted(names)[:12]}")
                 ok = True
                 break
 

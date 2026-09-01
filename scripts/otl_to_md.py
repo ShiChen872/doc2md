@@ -486,7 +486,7 @@ def convert_file(
         note = (
             f"> 来源: {source_url}\n"
             f"> 类型: WPS 智能文档 (.otl)\n"
-            f"> 说明: 正文由 open/otl JSON 解析；图片来自页面临时 CDN（若有）。"
+            f"> 说明: 正文由 open/otl JSON 解析；图片来自页面临时 CDN 或 /attachment/shapes raw（取更清晰的）。"
         )
 
     md = otl_to_markdown(

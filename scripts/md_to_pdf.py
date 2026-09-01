@@ -2,19 +2,22 @@
 """Convert a local Markdown file (plus sibling *_assets/) to PDF.
 
 Usage:
-  md_to_pdf.py <input.md> [-o OUTPUT.pdf] [--engine chrome|typst]
-               [--theme default|brand] [--no-toc] [--keep-ocr]
+  md_to_pdf.py <input.md> [-o OUTPUT.pdf] [--engine chrome|typst|wps]
+               [--theme default|brand] [--no-toc] [--keep-ocr] [--no-compress]
 
 Default engine is Chrome print (no extra install). Typst is optional and used
 for branded typesetting (`--engine typst --theme brand`). Markdown stays the
-source of truth. Do not call WPS convert APIs or drive the WPS client.
+source of truth. `--engine=wps` is not supported. Do not call WPS convert APIs
+or drive the WPS client.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import html as html_lib
 import re
+import shutil
 import sys
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -42,6 +45,13 @@ HTML_SRC_RE = re.compile(
 PDF_PREVIEW_HINT_RE = re.compile(r"网页预览分页截图")
 PAGE_HEADING_RE = re.compile(r"^## 第\s+\d+\s+页\s*$", re.MULTILINE)
 HEADING_RE = re.compile(r"^#{1,6}\s+", re.MULTILINE)
+PRINT_COMPRESS_NAME_RE = re.compile(
+    r"^(page|slide|pdf_page)_\d+\.(png|jpe?g|webp)$",
+    re.IGNORECASE,
+)
+PRINT_RASTER_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
+PRINT_JPEG_QUALITY = 82
+PRINT_MAX_EDGE = 1600
 
 ATX_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 TOC_MARKER_RE = re.compile(r"(?m)^\[TOC\]\s*$")
@@ -281,28 +291,128 @@ def is_remote_or_data_url(url: str) -> bool:
     return bool(parsed.scheme in {"http", "https", "data", "mailto"})
 
 
-def resolve_local_url(url: str, md_dir: Path) -> str | None:
-    """Turn a relative Markdown/HTML URL into a file:// URI if the file exists."""
+def resolve_local_path(url: str, md_dir: Path) -> Path | None:
+    """Resolve a relative Markdown/HTML URL to a local file path."""
     raw = (url or "").strip()
     if not raw or is_remote_or_data_url(raw):
         return None
     if raw.startswith("file:"):
-        return raw
+        parsed = urlparse(raw)
+        path_part = unquote(parsed.path or "")
+        candidate = Path(path_part)
+        return candidate if candidate.is_file() else None
     path_part = unquote(raw.split("#", 1)[0].split("?", 1)[0])
     candidate = Path(path_part)
     if not candidate.is_absolute():
         candidate = (md_dir / candidate).resolve()
     if not candidate.is_file():
         return None
-    return candidate.as_uri()
+    return candidate
 
 
-def rewrite_local_urls(html: str, md_dir: Path) -> str:
+def resolve_local_url(url: str, md_dir: Path) -> str | None:
+    """Turn a relative Markdown/HTML URL into a file:// URI if the file exists."""
+    raw = (url or "").strip()
+    if raw.startswith("file:"):
+        return raw
+    path = resolve_local_path(url, md_dir)
+    return path.as_uri() if path else None
+
+
+def should_compress_print_image(src: Path, *, compress_all: bool = False) -> bool:
+    if src.suffix.lower() not in PRINT_RASTER_EXTS:
+        return False
+    if compress_all:
+        return True
+    return bool(PRINT_COMPRESS_NAME_RE.match(src.name))
+
+
+def compress_image_for_print(
+    src: Path,
+    dest: Path,
+    *,
+    max_edge: int = PRINT_MAX_EDGE,
+    quality: int = PRINT_JPEG_QUALITY,
+) -> bool:
+    """Write a print-sized JPEG. Does not modify src. False if nothing useful was written."""
+    try:
+        from PIL import Image
+    except ImportError:
+        return False
+    try:
+        with Image.open(src) as im:
+            im.load()
+            work = im.convert("RGB")
+        w, h = work.size
+        if max(w, h) > max_edge > 0:
+            scale = max_edge / float(max(w, h))
+            work = work.resize(
+                (max(1, int(w * scale)), max(1, int(h * scale))),
+                Image.Resampling.LANCZOS,
+            )
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        work.save(
+            dest,
+            format="JPEG",
+            quality=quality,
+            optimize=True,
+            subsampling=0,
+        )
+    except Exception:
+        dest.unlink(missing_ok=True)
+        return False
+    return dest.is_file() and dest.stat().st_size >= 100
+
+
+def stage_print_image(src: Path, cache_dir: Path) -> Path:
+    """Return a smaller JPEG copy in cache_dir, or src if compression does not help."""
+    digest = hashlib.sha1(str(src.resolve()).encode("utf-8")).hexdigest()[:10]
+    dest = cache_dir / f"{src.stem}-{digest}.jpg"
+    if dest.is_file() and dest.stat().st_mtime >= src.stat().st_mtime and dest.stat().st_size >= 100:
+        if dest.stat().st_size < src.stat().st_size:
+            return dest
+        return src
+    if not compress_image_for_print(src, dest):
+        dest.unlink(missing_ok=True)
+        return src
+    if dest.stat().st_size >= src.stat().st_size:
+        dest.unlink(missing_ok=True)
+        return src
+    return dest
+
+
+def _print_target_uri(
+    url: str,
+    md_dir: Path,
+    *,
+    print_cache: Path | None = None,
+    compress_all: bool = False,
+) -> str | None:
+    raw = (url or "").strip()
+    if raw.startswith("file:"):
+        return raw
+    src = resolve_local_path(url, md_dir)
+    if src is None:
+        return None
+    if print_cache is not None and should_compress_print_image(src, compress_all=compress_all):
+        src = stage_print_image(src, print_cache)
+    return src.as_uri()
+
+
+def rewrite_local_urls(
+    html: str,
+    md_dir: Path,
+    *,
+    print_cache: Path | None = None,
+    compress_all: bool = False,
+) -> str:
     """Rewrite relative img/src and href to file:// so Chrome can load assets."""
 
     def repl_html(match: re.Match[str]) -> str:
         url = match.group("url")
-        resolved = resolve_local_url(url, md_dir)
+        resolved = _print_target_uri(
+            url, md_dir, print_cache=print_cache, compress_all=compress_all
+        )
         if not resolved:
             return match.group(0)
         return f"{match.group('attr')}{match.group('q')}{resolved}{match.group('q')}"
@@ -311,11 +421,38 @@ def rewrite_local_urls(html: str, md_dir: Path) -> str:
 
     def repl_md_img(match: re.Match[str]) -> str:
         alt, url = match.group(1), match.group(2)
-        resolved = resolve_local_url(url, md_dir)
+        resolved = _print_target_uri(
+            url, md_dir, print_cache=print_cache, compress_all=compress_all
+        )
         target = resolved or url
         return f"![{alt}]({target})"
 
     return MD_IMAGE_RE.sub(repl_md_img, html)
+
+
+def rewrite_markdown_images_for_print(
+    text: str,
+    md_dir: Path,
+    print_cache: Path,
+    *,
+    compress_all: bool = False,
+) -> str:
+    """Point Markdown image links at compressed copies (Typst relative paths)."""
+
+    def repl(match: re.Match[str]) -> str:
+        alt, url = match.group(1), match.group(2)
+        src = resolve_local_path(url, md_dir)
+        if src is None:
+            return match.group(0)
+        if should_compress_print_image(src, compress_all=compress_all):
+            src = stage_print_image(src, print_cache)
+        try:
+            rel = src.resolve().relative_to(md_dir.resolve()).as_posix()
+        except ValueError:
+            rel = src.as_posix()
+        return f"![{alt}]({rel})"
+
+    return MD_IMAGE_RE.sub(repl, text)
 
 
 def preprocess_markdown(
@@ -325,6 +462,8 @@ def preprocess_markdown(
     keep_ocr: bool = False,
     toc: bool = True,
     rewrite_urls: bool = True,
+    print_cache: Path | None = None,
+    compress_all: bool = False,
 ) -> str:
     text = strip_html_comments(text)
     text = degrade_video_tags(text)
@@ -333,7 +472,9 @@ def preprocess_markdown(
     if toc and not is_pdf_preview_markdown(text):
         text = inject_toc_marker(text)
     if rewrite_urls:
-        return rewrite_local_urls(text, md_dir)
+        return rewrite_local_urls(
+            text, md_dir, print_cache=print_cache, compress_all=compress_all
+        )
     return text
 
 
@@ -381,11 +522,26 @@ def build_print_html(
     keep_ocr: bool = False,
     toc: bool = True,
     theme: str = "default",
+    print_cache: Path | None = None,
+    compress: bool = False,
 ) -> str:
     md_dir = md_path.parent.resolve()
-    prepared = preprocess_markdown(md_text, md_dir, keep_ocr=keep_ocr, toc=toc)
+    preview = is_pdf_preview_markdown(md_text)
+    prepared = preprocess_markdown(
+        md_text,
+        md_dir,
+        keep_ocr=keep_ocr,
+        toc=toc,
+        print_cache=print_cache if compress else None,
+        compress_all=bool(compress and preview),
+    )
     body = markdown_to_body_html(prepared)
-    body = rewrite_local_urls(body, md_dir)
+    body = rewrite_local_urls(
+        body,
+        md_dir,
+        print_cache=print_cache if compress else None,
+        compress_all=bool(compress and preview),
+    )
     title = document_title(md_text, md_path.stem)
     return wrap_document(body, title=title, theme=theme)
 
@@ -475,6 +631,8 @@ def render_pdf_with_typst(
     keep_ocr: bool = False,
     toc: bool = True,
     theme: str = "brand",
+    print_cache: Path | None = None,
+    compress: bool = False,
 ) -> str:
     """Write a temp .typ next to the Markdown and compile. Returns Typst source."""
     md_dir = md_path.parent.resolve()
@@ -486,6 +644,13 @@ def render_pdf_with_typst(
         toc=False,  # Typst outline is generated from headings, not [TOC]
         rewrite_urls=False,
     )
+    if compress and print_cache is not None:
+        prepared = rewrite_markdown_images_for_print(
+            prepared,
+            md_dir,
+            print_cache,
+            compress_all=is_pdf_preview_markdown(md_text),
+        )
     title = document_title(md_text, md_path.stem)
     sections = [t for level, t in iter_headings(md_text) if level in {2, 3} and t]
     want_toc = toc and len(sections) >= 2
@@ -519,6 +684,7 @@ def markdown_file_to_pdf(
     toc: bool = True,
     engine: str = "chrome",
     theme: str = "default",
+    compress: bool = True,
 ) -> dict:
     src = md_path.expanduser().resolve()
     if not src.is_file():
@@ -534,25 +700,51 @@ def markdown_file_to_pdf(
     except TypstError as e:
         raise MdPdfError(str(e)) from e
 
-    if engine_key == "chrome":
-        html = build_print_html(
-            text, src, keep_ocr=keep_ocr, toc=toc, theme=theme_key
+    if engine_key == "wps":
+        raise MdPdfError(
+            "--engine=wps is not available. WPS has no official Mac/Linux CLI; "
+            "Windows COM would drive the WPS client, which this skill does not do. "
+            "Use --engine chrome (default) or --engine typst, or 另存为 PDF in the WPS GUI."
         )
-        render_pdf_with_chrome(html, dest, md_dir=src.parent, theme=theme_key)
-        used_toc = '<div class="toc">' in html
-    elif engine_key == "typst":
-        html = ""
-        source = render_pdf_with_typst(
-            text,
-            src,
-            dest,
-            keep_ocr=keep_ocr,
-            toc=toc,
-            theme=theme_key,
-        )
-        used_toc = toc and not is_pdf_preview_markdown(text) and "#outline(" in source
-    else:
-        raise MdPdfError(f"Unknown engine: {engine!r} (use chrome or typst)")
+
+    cache: Path | None = None
+    if compress:
+        cache = src.parent / f".doc2md_print_{dest.stem}_img"
+        if cache.exists():
+            shutil.rmtree(cache, ignore_errors=True)
+        cache.mkdir(parents=True, exist_ok=True)
+
+    try:
+        if engine_key == "chrome":
+            html = build_print_html(
+                text,
+                src,
+                keep_ocr=keep_ocr,
+                toc=toc,
+                theme=theme_key,
+                print_cache=cache,
+                compress=compress,
+            )
+            render_pdf_with_chrome(html, dest, md_dir=src.parent, theme=theme_key)
+            used_toc = '<div class="toc">' in html
+        elif engine_key == "typst":
+            html = ""
+            source = render_pdf_with_typst(
+                text,
+                src,
+                dest,
+                keep_ocr=keep_ocr,
+                toc=toc,
+                theme=theme_key,
+                print_cache=cache,
+                compress=compress,
+            )
+            used_toc = toc and not is_pdf_preview_markdown(text) and "#outline(" in source
+        else:
+            raise MdPdfError(f"Unknown engine: {engine!r} (use chrome or typst)")
+    finally:
+        if cache is not None:
+            shutil.rmtree(cache, ignore_errors=True)
 
     return {
         "input": str(src),
@@ -563,6 +755,7 @@ def markdown_file_to_pdf(
         "toc": used_toc,
         "engine": engine_key,
         "theme": theme_key,
+        "compress": compress,
     }
 
 
@@ -574,9 +767,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("-o", "--output", type=Path, default=None, help="Output .pdf path")
     parser.add_argument(
         "--engine",
-        choices=("chrome", "typst"),
+        choices=("chrome", "typst", "wps"),
         default="chrome",
-        help="PDF engine. chrome is default; typst needs the Typst CLI (win/mac/linux) or pip wheel",
+        help="PDF engine. chrome is default; typst needs the Typst CLI; wps is not supported",
     )
     parser.add_argument(
         "--theme",
@@ -594,6 +787,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Do not insert a table of contents from h2/h3 headings",
     )
+    parser.add_argument(
+        "--no-compress",
+        action="store_true",
+        help="Do not JPEG-compress page/slide screenshots for print (Markdown assets stay as-is either way)",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -604,6 +802,7 @@ def main(argv: list[str] | None = None) -> int:
             toc=not args.no_toc,
             engine=args.engine,
             theme=args.theme,
+            compress=not args.no_compress,
         )
     except MdPdfError as e:
         print(f"ERROR: {e}", file=sys.stderr)

@@ -33,11 +33,31 @@ def test_classify_feishu():
         == "feishu"
     )
     assert cli.classify("https://acme.larksuite.com/docx/ABC123xyz") == "feishu"
+    assert cli.classify("https://acme.feishu.cn/board/BOARDTOKEN1") == "feishu"
+    assert cli.classify("https://acme.feishu.cn/base/BASETK") == "feishu"
+    assert (
+        cli.classify(
+            "https://waytoagi.feishu.cn/share/base/form/shrcnYyxqAWdsFq5qBso8mDsOjg"
+        )
+        == "feishu"
+    )
+    assert cli.classify("https://acme.feishu.cn/share/base/view/shrcnViewTok") == "feishu"
+    assert cli.classify("https://acme.feishu.cn/sheets/SHEETTOKEN1") == "feishu"
+    assert cli.classify("https://acme.feishu.cn/mindnotes/MINDTOKEN1") == "feishu"
 
 
 def test_classify_unknown_url():
     with pytest.raises(ValueError, match="Unrecognized cloud URL"):
         cli.classify("https://example.com/wiki/abc")
+
+
+def test_classify_rejects_wps_lookalike_and_http():
+    with pytest.raises(ValueError, match="Unrecognized cloud URL"):
+        cli.classify("https://evilwps.cn/l/abc123")
+    with pytest.raises(ValueError, match="Unrecognized cloud URL"):
+        cli.classify("https://evil.example/kdocs.cn/l/abc123")
+    with pytest.raises(ValueError, match="Unrecognized cloud URL"):
+        cli.classify("http://365.kdocs.cn/l/abc123")
 
 
 def test_classify_missing_file():
@@ -83,3 +103,4 @@ def test_cli_no_login_flag():
     assert "--no-login" in help_text
     assert "--recursive" in help_text
     assert "--max-depth" in help_text
+    assert "--insecure" in help_text

@@ -25,10 +25,14 @@ from pathlib import Path
 CFG = Path.home() / ".config" / "doc2md"
 DEFAULT_STATE = CFG / "wps_storage_state.json"
 SCRIPTS = Path(__file__).resolve().parent
-SHARE_ID_RE = re.compile(
-    r"(?:kdocs\.cn|wps\.cn)/(?:wiki/l|l|view/l|view/media/l)/([A-Za-z0-9_-]+)",
-    re.IGNORECASE,
+sys.path.insert(0, str(SCRIPTS))
+
+from wps_to_md import (  # noqa: E402
+    WpsError,
+    extract_share_id as extract_share_id_strict,
+    normalize_url as normalize_share_url,
 )
+
 SAFE_NAME_RE = re.compile(r"[^\w.\u4e00-\u9fff\-]+")
 
 
@@ -37,15 +41,10 @@ class WpsDownloadError(Exception):
 
 
 def extract_share_id(url: str) -> str | None:
-    m = SHARE_ID_RE.search(url)
-    return m.group(1) if m else None
-
-
-def normalize_share_url(url: str) -> str:
-    url = url.strip()
-    if not url.startswith("http"):
-        url = "https://" + url
-    return url
+    try:
+        return extract_share_id_strict(url)
+    except WpsError:
+        return None
 
 
 def safe_name(name: str) -> str:
@@ -57,10 +56,11 @@ def download_share(url: str, output: Path | None, *, auto_login: bool = True) ->
     import io
     import zipfile
 
-    url = normalize_share_url(url)
-    sid = extract_share_id(url)
-    if not sid:
-        raise WpsDownloadError(f"Cannot parse share id from URL: {url}")
+    try:
+        url = normalize_share_url(url)
+        sid = extract_share_id_strict(url)
+    except WpsError as e:
+        raise WpsDownloadError(str(e)) from e
     if not DEFAULT_STATE.is_file():
         if auto_login:
             print(

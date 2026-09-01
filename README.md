@@ -10,7 +10,7 @@ Works with Cursor (desktop or CLI), Codex, and other Agent Skills–compatible h
 - **PPTX**: theme text per slide + full-slide screenshots via `office2pdf-python` (LibreOffice optional fallback)
 - **PDF**: text via markitdown + embedded images via PyMuPDF; **scanned/image-only PDFs** auto-detected and OCR'd page-by-page
 - **Images** (png/jpg/…): keep original in `*_assets/` + OCR via [RapidOCR](https://github.com/RapidAI/RapidOCR) (`rapidocr-onnxruntime`; tesseract fallback)
-- Cloud: `kdocs.cn` / `365.kdocs.cn` / `plus.wps.cn` share links; `feishu.cn` / `larksuite.com` wiki & docx
+- Cloud: `kdocs.cn` / `365.kdocs.cn` / `plus.wps.cn` share links; `feishu.cn` / `larksuite.com` wiki, docx, board, base, sheets, mindnotes
 - WPS intelligent docs (`.otl`): parse `open/otl` JSON; tables rendered as Markdown tables (including images in cells); nested file cards become Markdown links; `--recursive` optionally converts those children one level
 - **WPS media** (`.mp4` / `view/media/l/`): Markdown card + cover; optional local `preview.mp4` via ffmpeg HLS remux when original download is denied
 - **WPS PDF shares**: if original download is denied, screenshot web-viewer pages (`page_NNN.png`) + OCR
@@ -19,9 +19,10 @@ Works with Cursor (desktop or CLI), Codex, and other Agent Skills–compatible h
 - **WPS dbsheet** (`.dbt`): if download is denied, screenshot each web-viewer sheet/dashboard
 - **WPS 流程图 / 思维导图** (`.pom` / `.pof`): screenshot each ProcessOn canvas tab (not 画板/白板)
 - **WPS 白板** (`.kw`, `office_type=b`): screenshot the web canvas (handled before PPT; not Feishu 画板)
-- **Markdown → PDF** (optional): `md_to_pdf.py` prints a local `.md` via Chrome by default (目录 / 页眉 / 页码). `--engine typst --theme brand` is optional branded typesetting (needs Typst). WPS Save As PDF is a manual fallback
+- **Feishu 画板 / 多维表格 / 电子表格 / 思维笔记**: standalone `/board/` `/base/` `/sheets/` `/mindnotes/` screenshot the visible viewer; matching in-doc blocks screenshot instead of an HTML skip
+- **Markdown → PDF** (optional): `md_to_pdf.py` prints a local `.md` via Chrome by default (目录 / 页眉 / 页码). Page/slide screenshots are JPEG-compressed for print (`--no-compress` to keep PNG). `--engine typst --theme brand` is optional branded typesetting (needs Typst). `--engine=wps` is not supported (no silent fallback). WPS Save As PDF is a manual GUI fallback
 - **Feishu**: Playwright session (`feishu_login.py`) + in-page `PageMain` block tree → Markdown + assets; code fences keep language (enum mapped); file attachments and bookmarks from fallback blocks
-- **OTL images**: place by `sourceKey` / `imgID` (not array index); prefer CDN match; if incomplete, scroll + `/attachment/shapes` by `sourceKey`, with a second pass for any still-missing keys
+- **OTL images**: place by `sourceKey` / `imgID` (not array index); capture CDN and `/attachment/shapes` `raw`, keep the sharper (more pixels). If CDN is incomplete, use shapes by `sourceKey` only
 - Images saved as relative Markdown links (not base64)
 
 ## Setup
@@ -101,8 +102,11 @@ Agents (Cursor / Codex / Comate) should run `doc2md.py` for conversion to Markdo
 ### Markdown → PDF (optional)
 
 ```bash
-# Default: Chrome print
+# Default: Chrome print (page/slide screenshots JPEG-compressed for print)
 ~/.config/doc2md/venv/bin/python scripts/md_to_pdf.py /path/to/out.md -o /path/to/out.pdf
+
+# Keep original PNG tiles in the PDF
+~/.config/doc2md/venv/bin/python scripts/md_to_pdf.py /path/to/out.md -o /path/to/out.pdf --no-compress
 
 # Optional: Typst + brand theme (CLI on PATH, or `pip install typst`)
 ~/.config/doc2md/venv/bin/python scripts/md_to_pdf.py /path/to/out.md -o /path/to/out.pdf --engine typst --theme brand
@@ -114,12 +118,14 @@ Typst is **not macOS-only**. Install the official binary, then the same `--engin
 - Windows: `winget install --id Typst.Typst -e` (or `scoop install typst`, or unzip [GitHub Releases](https://github.com/typst/typst/releases) `typst-*-pc-windows-msvc.zip` onto PATH)
 - Linux: same Releases page
 
-Chrome inserts a 目录 from h2/h3, header title, and page numbers (`--no-toc` to skip). `--theme brand` uses navy/accent report colors (no logo). PDF-preview Markdown skips the TOC. If Chrome print is unavailable, open the `.md` in WPS and 另存为 PDF (GUI only — not scripted). Without Typst, keep `--engine chrome` (the default).
+Chrome inserts a 目录 from h2/h3, header title, and page numbers (`--no-toc` to skip). `--theme brand` uses navy/accent report colors (no logo). PDF-preview Markdown skips the TOC. `--engine=wps` errors (no official Mac/Linux CLI; Windows COM would drive the client). If Chrome print is unavailable, open the `.md` in WPS and 另存为 PDF (GUI only — not scripted). Without Typst, keep `--engine chrome` (the default).
 
 Session files live under `~/.config/doc2md/` (not in this repo):
 
-- `wps_storage_state.json` / `wps_cookie.txt`
-- `feishu_storage_state.json` / `feishu_cookie.txt`
+- `wps_storage_state.json`
+- `feishu_storage_state.json`
+
+The config directory is `0700` and session files are `0600`. Plaintext `*_cookie.txt` backups are no longer written.
 
 ## Scripts
 

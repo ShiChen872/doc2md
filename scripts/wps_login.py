@@ -5,8 +5,7 @@ Usage:
   wps_login.py [share_url]
 
 Saves:
-  ~/.config/doc2md/wps_storage_state.json   (Playwright storage — preferred)
-  ~/.config/doc2md/wps_cookie.txt           (Cookie header string — fallback)
+  ~/.config/doc2md/wps_storage_state.json   (Playwright storage)
 
 Requires: playwright + system Chrome (channel=chrome).
 """
@@ -18,9 +17,11 @@ import sys
 import time
 from pathlib import Path
 
-CFG = Path.home() / ".config" / "doc2md"
+import session as sess
+from wps_to_md import WpsError, check_wps_host
+
+CFG = sess.CFG
 DEFAULT_STATE = CFG / "wps_storage_state.json"
-DEFAULT_COOKIE = CFG / "wps_cookie.txt"
 DEFAULT_URL = "https://365.kdocs.cn/"
 
 
@@ -31,7 +32,12 @@ class LoginError(Exception):
 def run_login(url: str, timeout_sec: int = 300) -> None:
     from playwright.sync_api import sync_playwright
 
-    CFG.mkdir(parents=True, exist_ok=True)
+    try:
+        url = check_wps_host(url or DEFAULT_URL)
+    except WpsError as e:
+        raise LoginError(str(e)) from e
+
+    sess.ensure_config_dir()
     print("=" * 60)
     print("请在弹出的 Chrome 窗口中完成登录（企业 SSO / 扫码均可）。")
     print("检测到 wps_sid 且离开登录页后，会自动保存会话并关闭窗口。")
@@ -56,28 +62,12 @@ def run_login(url: str, timeout_sec: int = 300) -> None:
                 x in cur for x in ("passport", "singlesign", "singlesso", "chooseaccount", "/login")
             )
             print(
-                f"wait url={cur[:100]} cookies={len(cookies)} "
+                f"wait url={sess.redact_url_for_log(cur)} cookies={len(cookies)} "
                 f"wps_sid={'wps_sid' in names} on_login={on_login}"
             )
             if has_sid and not on_login:
-                context.storage_state(path=str(DEFAULT_STATE))
-                preferred = [
-                    c
-                    for c in cookies
-                    if any(
-                        x in (c.get("domain") or "")
-                        for x in ("kdocs.cn", "wps.cn", "wpscdn.cn")
-                    )
-                ]
-                use = preferred or cookies
-                # Deduplicate by name (keep last)
-                by_name: dict[str, str] = {}
-                for c in use:
-                    by_name[c["name"]] = c["value"]
-                cookie_str = "; ".join(f"{k}={v}" for k, v in by_name.items())
-                DEFAULT_COOKIE.write_text(cookie_str + "\n", encoding="utf-8")
+                sess.write_storage_state(context, DEFAULT_STATE)
                 print(f"OK wrote {DEFAULT_STATE}")
-                print(f"OK wrote {DEFAULT_COOKIE} ({len(by_name)} cookies)")
                 ok = True
                 break
 

@@ -22,15 +22,6 @@ sys.path.insert(0, str(SCRIPTS))
 
 Kind = str  # "local" | "wps" | "feishu"
 
-WPS_HINT_RE = re.compile(
-    r"(?:kdocs\.cn|wps\.cn)/(?:wiki/l|l|view/l|view/media/l)/[A-Za-z0-9_-]+",
-    re.IGNORECASE,
-)
-FEISHU_PATH_RE = re.compile(
-    r"/(wiki|docx|docs)/[A-Za-z0-9_-]+",
-    re.IGNORECASE,
-)
-
 
 def looks_like_url(raw: str) -> bool:
     text = (raw or "").strip()
@@ -55,19 +46,21 @@ def classify(raw: str) -> Kind:
     if path.is_file():
         return "local"
 
-    if looks_like_url(text) or WPS_HINT_RE.search(text) or "feishu.cn" in text.lower():
-        from urllib.parse import urlparse
+    if looks_like_url(text) or "feishu.cn" in text.lower() or "larksuite.com" in text.lower():
+        from feishu_to_md import FeishuError, parse_feishu_url
+        from wps_to_md import WpsError, parse_wps_url
 
-        from feishu_to_md import HOST_RE as FEISHU_HOST_RE
-        from wps_to_md import SHARE_ID_RE
-
-        url = text if text.startswith("http") else f"https://{text}"
-        if SHARE_ID_RE.search(url):
+        url = text if text.startswith(("http://", "https://")) else f"https://{text}"
+        try:
+            parse_wps_url(url)
             return "wps"
-        parsed = urlparse(url)
-        host = (parsed.hostname or "").lower()
-        if host and FEISHU_HOST_RE.search(host) and FEISHU_PATH_RE.search(parsed.path or ""):
+        except WpsError:
+            pass
+        try:
+            parse_feishu_url(url)
             return "feishu"
+        except FeishuError:
+            pass
         raise ValueError(
             f"Unrecognized cloud URL (need kdocs/wps share or feishu wiki/docx): {raw}"
         )
@@ -154,6 +147,7 @@ def run_feishu(
     headed: bool = False,
     timeout_ms: int = 60000,
     auto_login: bool = True,
+    insecure: bool = False,
 ) -> int:
     from feishu_to_md import FeishuError, normalize_url, share_to_markdown
 
@@ -164,6 +158,7 @@ def run_feishu(
             headless=not headed,
             timeout_ms=timeout_ms,
             auto_login=auto_login,
+            insecure=insecure,
         )
     except FeishuError as e:
         print(f"ERROR: {e}", file=sys.stderr)
@@ -194,6 +189,11 @@ def main(argv: list[str] | None = None) -> int:
         "--no-login",
         action="store_true",
         help="Do not open Chrome if a WPS/Feishu session is missing or expired",
+    )
+    parser.add_argument(
+        "--insecure",
+        action="store_true",
+        help="Feishu only: disable HTTPS certificate checks (enterprise MITM/proxy)",
     )
     parser.add_argument(
         "--recursive",
@@ -238,6 +238,7 @@ def main(argv: list[str] | None = None) -> int:
             headed=args.headed,
             timeout_ms=args.timeout_ms,
             auto_login=not args.no_login,
+            insecure=args.insecure,
         )
     except ValueError as e:
         print(f"ERROR: {e}", file=sys.stderr)

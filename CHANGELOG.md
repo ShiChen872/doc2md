@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+## v0.4.16
+
+- Session files: config dir `0700`, storage state `0600`; stop writing unused `*_cookie.txt`. Login logs omit SSO query strings.
+- WPS/Feishu URLs: HTTPS + real hostname only; Feishu rejects reserved path tokens (`space`, `gallery`, …).
+- Feishu: heading/text blocks render children; mermaid ISV accepts string `data`; failed assets become HTML comments; default HTTPS cert checks (`--insecure` to bypass).
+- Bare data URIs no longer swallow following Markdown text.
+- `tests/fixtures/page_screenshot.png` is part of the tree (clone + pytest).
+
+## v0.4.15
+
+- Feishu 画板 (`/board/`) and 多维表格 (`/base/`, `/share/base/`): screenshot the visible web viewer when there is no doc `PageMain`. Board and bitable blocks inside wiki/docx screenshot the embed instead of `<!-- skipped feishu block -->`.
+- Feishu 电子表格 (`/sheets/`) and 思维笔记 (`/mindnotes/`): same web-viewer screenshot path. In-doc `sheet` / `mindnote` blocks screenshot the embed. Poll / chat cards still skipped.
+- `--engine=wps` is an explicit error (no official Mac/Linux CLI; Windows COM would drive the WPS client). No silent Chrome fallback.
+- OTL images: always fetch `/attachment/shapes` `raw` and keep it when it has more pixels than the CDN capture. Incomplete CDN still uses sourceKey shapes only.
+- PDF print: JPEG-compress `page_` / `slide_` screenshots (4:4:4, quality 82) so preview PDFs shrink. Markdown `*_assets/` stay PNG. `--no-compress` keeps originals.
+
 ## v0.4.14
 
 - WPS 白板 (`.kw`, `office_type=b`): screenshot the web canvas (`.kw_container`). Must run before PPT capture because this viewer also uses `.slide-uil-view`. Feishu bitable / 画板 still out of scope.

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Comate install zip is slim (`SKILL.md` + `scripts/` only). Tests stay in git; including them trips the cloud security-audit LLM (504).
+
 ## v0.4.16
 
 - Session files: config dir `0700`, storage state `0600`; stop writing unused `*_cookie.txt`. Login logs omit SSO query strings.

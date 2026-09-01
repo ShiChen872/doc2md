@@ -143,6 +143,17 @@ The config directory is `0700` and session files are `0600`. Plaintext `*_cookie
 
 See [SKILL.md](SKILL.md) for agent-oriented workflow instructions.
 
+### Comate install zip
+
+Comate's security audit times out if the zip includes tests (code=500102 / LLM 504).
+The cloud package is **slim**: `SKILL.md` + `scripts/` only.
+
+```bash
+./pack-comate.sh 0.4.16 /path/to/doc2md-0.4.16-comate.zip
+```
+
+GitHub source still includes `tests/` (clone + pytest). Do not pack `tests/`, `README.md`, or `CHANGELOG.md` into the Comate zip.
+
 ## Notes
 
 - WPS cloud access uses unofficial web APIs and may break when WPS changes their frontend.

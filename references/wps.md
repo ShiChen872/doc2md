@@ -35,5 +35,5 @@ Cannot use drive binary download (`notAllowType`). Capture `open/otl` JSON + CDN
 
 - Tables (`outline-table`) become Markdown tables (including cell images).
 - Code blocks keep `attrs.lang`.
-- Nested file cards (`WPSDocument`) become Markdown links. **Do not recurse by default.** Only if the user asks to 展开嵌套 / 递归 / convert inner SOP cards, pass `--recursive` (depth 1) or `--max-depth N`. Children land in `{stem}_nested/`; failed children keep the original kdocs link. A parent like 《微软替换物料合集》 has 20+ nested SOP/xlsx/pptx — warn that it can take a long time.
+- Nested file cards (`WPSDocument`) become Markdown links. **Do not recurse by default.** Only if the user asks to 展开嵌套 / 递归 / convert inner SOP cards, pass `--recursive` (depth 1) or `--max-depth N`. Children land in `{stem}_nested/`; failed children keep the original kdocs link. The same share converts once; later cards rewrite to that existing local file. A parent like 《微软替换物料合集》 has 20+ nested SOP/xlsx/pptx — warn that it can take a long time.
 - Images map by `sourceKey` / `imgID` (not array index). Fetch CDN and shapes `raw`, **keep the sharper (more pixels)**. If CDN is incomplete, use shapes by `sourceKey` only. Retry a scroll round if keys are missing.

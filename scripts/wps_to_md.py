@@ -114,7 +114,10 @@ def check_wps_host(url: str) -> str:
         if scheme:
             raise WpsError(f"WPS URL must be HTTPS: {url}")
         raw = "https://" + raw
-    parsed = urlparse(raw)
+    try:
+        parsed = urlparse(raw)
+    except ValueError as e:
+        raise WpsError(f"Invalid WPS URL: {url}") from e
     host = (parsed.hostname or "").lower()
     if parsed.scheme != "https" or not is_wps_hostname(host):
         raise WpsError(f"Not a WPS/kdocs HTTPS host: {url}")
@@ -126,7 +129,10 @@ def check_wps_host(url: str) -> str:
 def parse_wps_url(url: str) -> dict[str, str]:
     """Parse a WPS share URL → {sid, host, path, url}. Rejects HTTP and lookalike hosts."""
     checked = check_wps_host(url)
-    parsed = urlparse(checked)
+    try:
+        parsed = urlparse(checked)
+    except ValueError as e:
+        raise WpsError(f"Invalid WPS URL: {url}") from e
     path = parsed.path or ""
     m = SHARE_PATH_RE.match(path)
     if not m:
@@ -1534,7 +1540,7 @@ def convert_otl(otl_json: Path, md_out: Path, assets_dir: Path, source_url: str)
     )
 
 
-NESTED_HREF_RE = re.compile(r"https?://[^\s)>\"]+", re.IGNORECASE)
+NESTED_HREF_RE = re.compile(r"https?://[^\s)>\"\]]+", re.IGNORECASE)
 
 
 def resolve_nested_depth(*, recursive: bool = False, max_depth: int | None = None) -> int:
@@ -1546,6 +1552,11 @@ def resolve_nested_depth(*, recursive: bool = False, max_depth: int | None = Non
     return 1 if recursive else 0
 
 
+def relative_nested_path(dest: Path, start_dir: Path) -> str:
+    """POSIX relative path from start_dir to dest (3.11-safe)."""
+    return Path(os.path.relpath(dest.resolve(), start_dir.resolve())).as_posix()
+
+
 def rewrite_nested_share_links(md: str, replacements: dict[str, str]) -> str:
     """Replace kdocs/wps share URLs with local relative paths, keyed by share id."""
     if not replacements:
@@ -1555,7 +1566,7 @@ def rewrite_nested_share_links(md: str, replacements: dict[str, str]) -> str:
         url = match.group(0)
         try:
             sid = extract_share_id(url)
-        except WpsError:
+        except (WpsError, ValueError):
             return url
         return replacements.get(sid) or url
 
@@ -1571,11 +1582,13 @@ def expand_nested_otl_documents(
     auto_login: bool = False,
     convert_child=None,
     keep_work: bool = False,
+    outputs: dict[str, Path] | None = None,
 ) -> list[dict]:
     """Convert unique nested WPSDocument cards one level (or max_depth) down.
 
     Success: rewrite parent Markdown links to `{parent}_nested/{child}.md`.
-    Failure / cycle: keep the original kdocs URL. Never fails the parent.
+    Already-converted share: rewrite to the existing file (relpath).
+    Failure / in-progress cycle: keep the original kdocs URL. Never fails the parent.
     """
     from otl_to_md import iter_wps_document_cards
 
@@ -1588,6 +1601,7 @@ def expand_nested_otl_documents(
     nested_dir = parent_md.parent / f"{parent_md.stem}_nested"
     replacements: dict[str, str] = {}
     used_stems: set[str] = set()
+    output_map = outputs if outputs is not None else {}
 
     for card in iter_wps_document_cards(raw):
         href = str(card.get("href") or "").strip()
@@ -1617,15 +1631,29 @@ def expand_nested_otl_documents(
             )
             continue
         if child_sid in visited:
-            reports.append(
-                {
-                    "ok": False,
-                    "name": name,
-                    "share_id": child_sid,
-                    "type": dtype,
-                    "skipped": "already visited",
-                }
-            )
+            dest = output_map.get(child_sid)
+            if dest is not None and dest.is_file():
+                replacements[child_sid] = relative_nested_path(dest, parent_md.parent)
+                reports.append(
+                    {
+                        "ok": True,
+                        "name": name,
+                        "share_id": child_sid,
+                        "type": dtype,
+                        "output": str(dest),
+                        "reused": True,
+                    }
+                )
+            else:
+                reports.append(
+                    {
+                        "ok": False,
+                        "name": name,
+                        "share_id": child_sid,
+                        "type": dtype,
+                        "skipped": "already visited",
+                    }
+                )
             continue
 
         stem = safe_stem(Path(name).stem if name else child_sid)
@@ -1642,9 +1670,12 @@ def expand_nested_otl_documents(
                 max_depth=max_depth - 1,
                 _visited=visited,
                 keep_work=keep_work,
+                _outputs=output_map,
             )
-            rel = dest.relative_to(parent_md.parent).as_posix()
-            replacements[child_sid] = rel
+            dest = dest.expanduser().resolve()
+            visited.add(child_sid)
+            output_map[child_sid] = dest
+            replacements[child_sid] = relative_nested_path(dest, parent_md.parent)
             reports.append(
                 {
                     "ok": True,
@@ -1682,9 +1713,11 @@ def share_to_markdown(
     max_depth: int = 0,
     _visited: set[str] | None = None,
     keep_work: bool = False,
+    _outputs: dict[str, Path] | None = None,
 ) -> dict:
     url = normalize_url(url)
     visited = _visited if _visited is not None else set()
+    outputs = _outputs if _outputs is not None else {}
     try:
         return _share_to_markdown_once(
             url,
@@ -1693,6 +1726,7 @@ def share_to_markdown(
             max_depth=max_depth,
             visited=visited,
             keep_work=keep_work,
+            outputs=outputs,
         )
     except _SessionExpired:
         if auto_login and not _login_retried:
@@ -1705,6 +1739,7 @@ def share_to_markdown(
                 max_depth=max_depth,
                 _visited=visited,
                 keep_work=keep_work,
+                _outputs=outputs,
             )
         raise WpsError(
             "Failed to load share meta. Session may be expired — re-run wps_login.py."
@@ -1723,6 +1758,7 @@ def _share_to_markdown_once(
     max_depth: int = 0,
     visited: set[str] | None = None,
     keep_work: bool = False,
+    outputs: dict[str, Path] | None = None,
 ) -> dict:
     sid = extract_share_id(url)
     output_md = output_md.expanduser().resolve()
@@ -1737,6 +1773,7 @@ def _share_to_markdown_once(
             visited=visited,
             work=work,
             keep_work=keep_work,
+            outputs=outputs,
         )
         if keep_work:
             result["work_dir"] = str(work)
@@ -1756,6 +1793,7 @@ def _share_to_markdown_body(
     visited: set[str] | None = None,
     work: Path,
     keep_work: bool = False,
+    outputs: dict[str, Path] | None = None,
 ) -> dict:
     from playwright.sync_api import sync_playwright
     from otl_to_md import convert_file, load_otl
@@ -1763,6 +1801,7 @@ def _share_to_markdown_body(
     sid = extract_share_id(url)
     seen = visited if visited is not None else set()
     seen.add(sid)
+    output_map = outputs if outputs is not None else {}
     state = ensure_session(url, auto_login=auto_login)
     output_md = output_md.expanduser().resolve()
     output_md.parent.mkdir(parents=True, exist_ok=True)
@@ -2444,6 +2483,8 @@ def _share_to_markdown_body(
         if max_depth > 0:
             nested_otl_path = otl_path
 
+    if output_md.is_file():
+        output_map[sid] = output_md
     if nested_otl_path is not None:
         result["nested"] = expand_nested_otl_documents(
             load_otl(nested_otl_path),
@@ -2452,6 +2493,7 @@ def _share_to_markdown_body(
             visited=seen,
             auto_login=False,
             keep_work=keep_work,
+            outputs=output_map,
         )
     return result
 

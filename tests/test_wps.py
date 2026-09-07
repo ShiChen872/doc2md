@@ -44,6 +44,11 @@ def test_extract_share_id_wiki_path():
     ]
 
 
+def test_parse_wps_url_invalid_ipv6_is_wps_error():
+    with pytest.raises(wtm.WpsError, match="Invalid WPS URL"):
+        wtm.parse_wps_url("https://[::1/l/abc123")
+
+
 def test_parse_wps_url_rejects_lookalike_and_http():
     with pytest.raises(wtm.WpsError, match="HTTPS host"):
         wtm.parse_wps_url("https://evilwps.cn/l/abc123")
@@ -511,6 +516,19 @@ def test_rewrite_nested_share_links():
     assert "kdocs.cn/l/childaa" not in out
 
 
+def test_rewrite_nested_share_links_keeps_label_url():
+    md = (
+        "[https://ksmail.kingsoft.com:8888/](https://ksmail.kingsoft.com:8888/)\n"
+        "[清单](https://365.kdocs.cn/l/cdgM8Oxg8xMs)\n"
+    )
+    out = wtm.rewrite_nested_share_links(
+        md, {"cdgM8Oxg8xMs": "faq_nested/清单.md"}
+    )
+    assert "faq_nested/清单.md" in out
+    assert "kdocs.cn/l/cdgM8Oxg8xMs" not in out
+    assert "https://ksmail.kingsoft.com:8888/" in out
+
+
 def test_expand_nested_otl_rewrites_success_keeps_failures(tmp_path: Path):
     parent = tmp_path / "合集.md"
     parent.write_text(
@@ -576,6 +594,56 @@ def test_expand_nested_otl_rewrites_success_keeps_failures(tmp_path: Path):
     assert len(ok) == 1
     assert len(skipped) == 1
     assert len(failed) == 1
+
+
+def test_expand_nested_otl_reuses_existing_output(tmp_path: Path):
+    raw = {
+        "content": {
+            "type": "WPSDocument",
+            "attrs": {
+                "wpsDocumentName": "切换数据清单.otl",
+                "wpsDocumentLink": "https://www.kdocs.cn/l/sameid01",
+                "wpsDocumentType": "otl",
+            },
+        }
+    }
+    calls: list[str] = []
+    visited: set[str] = set()
+    outputs: dict[str, Path] = {}
+
+    def fake_convert(url, dest, **kwargs):
+        calls.append(url)
+        dest = Path(dest)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text("# 清单\n", encoding="utf-8")
+        return {"mode": "otl", "output": str(dest)}
+
+    parent_a = tmp_path / "方案A.md"
+    parent_a.write_text("[清单](https://www.kdocs.cn/l/sameid01)\n", encoding="utf-8")
+    reports_a = wtm.expand_nested_otl_documents(
+        raw,
+        parent_a,
+        max_depth=1,
+        visited=visited,
+        convert_child=fake_convert,
+        outputs=outputs,
+    )
+    parent_b = tmp_path / "方案B.md"
+    parent_b.write_text("[清单](https://www.kdocs.cn/l/sameid01)\n", encoding="utf-8")
+    reports_b = wtm.expand_nested_otl_documents(
+        raw,
+        parent_b,
+        max_depth=1,
+        visited=visited,
+        convert_child=fake_convert,
+        outputs=outputs,
+    )
+    assert calls == ["https://www.kdocs.cn/l/sameid01"]
+    assert "方案A_nested/切换数据清单.md" in parent_a.read_text(encoding="utf-8")
+    assert "方案A_nested/切换数据清单.md" in parent_b.read_text(encoding="utf-8")
+    assert "kdocs.cn/l/sameid01" not in parent_b.read_text(encoding="utf-8")
+    assert reports_a[0].get("ok") and not reports_a[0].get("reused")
+    assert reports_b[0].get("ok") and reports_b[0].get("reused")
 
 
 def test_expand_nested_depth_zero_is_noop(tmp_path: Path):

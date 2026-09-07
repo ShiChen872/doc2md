@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Nested link rewrite no longer crashes on Markdown where the label is also a URL (for example `[https://host:8888/](https://host:8888/)`). Bad hrefs stay as-is; valid kdocs cards still rewrite.
+- The same nested share converts once. Later cards rewrite to the existing local Markdown instead of keeping the kdocs URL.
+
 ## v0.4.17
 
 - Chrome PDF print: JavaScript off, strict CSP (no script/connect/frame), Playwright aborts `http(s)` during print. Raw HTML in Markdown is not stripped.

@@ -15,7 +15,7 @@ Works with Cursor (desktop or CLI), Codex, and other Agent Skills–compatible h
 - **WPS media** (`.mp4` / `view/media/l/`): Markdown card + cover; optional local `preview.mp4` via ffmpeg HLS remux when original download is denied
 - **WPS PDF shares**: if original download is denied, screenshot web-viewer pages (`page_NNN.png`) + OCR
 - **WPS presentations**: if `.pptx` download is denied, screenshot each web-viewer slide; `wiki/l/` knowledge links resolve to the file share
-- **WPS ksheet**: downloads as xlsx-compatible zip → Markdown tables
+- **WPS ksheet / Excel**: download as xlsx-compatible zip → Markdown tables; if download is denied, screenshot each web-viewer sheet tab
 - **WPS dbsheet** (`.dbt`): if download is denied, screenshot each web-viewer sheet/dashboard
 - **WPS 流程图 / 思维导图** (`.pom` / `.pof`): screenshot each ProcessOn canvas tab (not 画板/白板)
 - **WPS 白板** (`.kw`, `office_type=b`): screenshot the web canvas (handled before PPT; not Feishu 画板)
@@ -147,15 +147,15 @@ See [SKILL.md](SKILL.md) for agent-oriented workflow. Type-specific notes are in
 
 ### Comate install zip
 
-Comate's security audit times out if the zip includes tests (code=500102 / LLM 504).
-The cloud package is **slim**: `SKILL.md` + `scripts/` + `references/`.
+Comate's security audit times out if the zip includes tests or extra markdown (code=500102 / LLM 504).
+The cloud package is **slim**: `SKILL.md` + `scripts/` only (`references/` stays in git).
 `pack-comate.sh` injects `display_name: 文档转Markdown` into the zipped `SKILL.md` (git source stays validator-clean).
 
 ```bash
-./pack-comate.sh 0.4.17 /path/to/doc2md-0.4.17-comate.zip
+./pack-comate.sh 0.4.18 /path/to/doc2md-0.4.18-comate.zip
 ```
 
-GitHub source still includes `tests/` (clone + pytest). Do not pack `tests/`, `README.md`, `CHANGELOG.md`, or `agents/` into the Comate zip.
+GitHub source still includes `tests/` and `references/` (clone + pytest). Do not pack `tests/`, `README.md`, `CHANGELOG.md`, `references/`, or `agents/` into the Comate zip.
 
 ## Notes
 

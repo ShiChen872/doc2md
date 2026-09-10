@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Pack the Comate install zip: SKILL.md + scripts/ + references/.
-# Tests, fixtures, README, CHANGELOG, and agents/ stay in git; tests trip
-# Comate's security-audit LLM (504 / 500102) if included.
+# Pack the Comate install zip: SKILL.md + scripts/ only.
+# Tests, fixtures, README, CHANGELOG, agents/, and references/ stay in git.
+# Extra markdown/tests make Comate's security-audit LLM time out (504 / 500102).
 #
 # Git SKILL.md has only name/description (official skill validator).
 # Comate UI needs display_name, so this script injects it into the zip
@@ -65,14 +65,13 @@ STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 cp "$ROOT/SKILL.md" "$STAGE/SKILL.md"
 cp -R "$ROOT/scripts" "$STAGE/scripts"
-cp -R "$ROOT/references" "$STAGE/references"
 inject_comate_display_name "$STAGE/SKILL.md"
 
 rm -f "$DEST"
 (
   cd "$STAGE"
-  zip -r "$DEST" SKILL.md scripts references \
-    -x '*.pyc' '*__pycache__*' '*.pytest_cache*' '*.git*' '*DS_Store'
+  COPYFILE_DISABLE=1 zip -X -r "$DEST" SKILL.md scripts \
+    -x '*.pyc' '*__pycache__*' '*.pytest_cache*' '*.git*' '*DS_Store' '*/.*'
 )
 
 echo "$DEST"

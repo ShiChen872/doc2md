@@ -70,3 +70,21 @@ def test_pack_comate_injects_display_name(tmp_path: Path):
     fm = _frontmatter(src.read_text(encoding="utf-8"))
     assert "display_name: 文档转Markdown" in fm
     assert fm.index("name: doc2md") < fm.index("display_name:")
+
+
+def test_pack_comate_zip_is_slim(tmp_path: Path):
+    import zipfile
+
+    dest = tmp_path / "doc2md-comate.zip"
+    subprocess.check_call(["bash", str(ROOT / "pack-comate.sh"), "0.0.0", str(dest)])
+    with zipfile.ZipFile(dest) as zf:
+        names = zf.namelist()
+        skill = zf.read("SKILL.md").decode("utf-8")
+    assert "SKILL.md" in names
+    assert any(n.startswith("scripts/") and n.endswith(".py") for n in names)
+    assert "scripts/doc2md.py" in names
+    assert not any(n.startswith("tests/") for n in names)
+    assert not any(n.startswith("references/") for n in names)
+    assert "README.md" not in names
+    assert "CHANGELOG.md" not in names
+    assert "display_name: 文档转Markdown" in skill

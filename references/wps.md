@@ -23,7 +23,7 @@ Session: `~/.config/doc2md/wps_storage_state.json` (Playwright; directory 0700, 
 
 **Presentations:** `.pptx` link shares often return `ErrForbidDownloadLinkFile`. Screenshot each `.slide-uil-view` slide. Knowledge-wiki URLs (`365.kdocs.cn/wiki/l/0l…`) resolve to the inner file share id. Do not use WPS `file-content` reading-mode markdown for decks — that is text-only.
 
-**ksheet / dbsheet:** `.ksheet` (`office_type=k`) downloads as an xlsx-compatible zip and becomes Markdown tables. `.dbt` (`office_type=d`) cannot be downloaded (`notAllowType`); screenshot each left-rail sheet and nested view (grid / form / dashboard), clipping the main pane. Visible viewer, not a full record dump.
+**ksheet / Excel / dbsheet:** `.ksheet` (`office_type=k`) and `.xlsx` (`office_type=s`) download as xlsx-compatible zip → Markdown tables when the share allows it. If download is `ErrForbidDownloadLinkFile`, screenshot each bottom sheet tab (`.et-status-sheet-item`), clipping `.et-grid-view-wrap`. `.dbt` (`office_type=d`) cannot be downloaded (`notAllowType`); screenshot each left-rail sheet and nested view (grid / form / dashboard). Visible viewer, not a full record dump.
 
 **流程图 / 思维导图:** `.pom` / `.pof` open in a ProcessOn iframe (`#dotviewIframe`). Skip original download (not an Office zip). Screenshot each bottom **画布** tab. Visible canvas, not a vector dump.
 

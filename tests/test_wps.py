@@ -89,11 +89,19 @@ def test_is_ksheet_and_dbsheet_share():
     assert wtm.is_ksheet_share("评估.ksheet")
     assert wtm.is_ksheet_share("x", office_type="k")
     assert not wtm.is_ksheet_share("评估.dbt")
+    assert wtm.is_spreadsheet_share("评估.ksheet")
+    assert wtm.is_spreadsheet_share("清单.xlsx")
+    assert wtm.is_spreadsheet_share("x", office_type="s")
+    assert wtm.is_spreadsheet_share("x", office_type="k")
+    assert not wtm.is_spreadsheet_share("评估.dbt")
+    assert not wtm.is_spreadsheet_share("notes.otl", office_type="o")
     assert wtm.is_dbsheet_share("项目管理.dbt")
     assert wtm.is_dbsheet_share("x", office_type="d")
     assert not wtm.is_dbsheet_share("评估.ksheet")
     assert not wtm.is_dbsheet_share("notes.otl", office_type="o")
     assert "view-item" in wtm.DB_SHEET_ITEM_SEL
+    assert "et-grid-view-wrap" in wtm.ET_GRID_SEL
+    assert "et-status-sheet-item" in wtm.ET_SHEET_ITEM_SEL
 
 
 def test_is_wps_diagram_share():
@@ -180,6 +188,17 @@ def test_build_pdf_preview_markdown():
     assert "## 风险及策略" in db
     assert "## 仪表盘" in db
     assert "风险 P0" in db
+    sheet = wtm.build_pdf_preview_markdown(
+        title="功能清单",
+        source_url="https://365.kdocs.cn/l/coffGvQ0Rh5m",
+        pages=[("清单_assets/page_001.png", "类别 模块")],
+        kind="spreadsheet",
+        headings=["多维表格产品功能清单-全集"],
+    )
+    assert "表格分享" in sheet
+    assert "网页预览分页截图" in sheet
+    assert "## 多维表格产品功能清单-全集" in sheet
+    assert "类别 模块" in sheet
     mind = wtm.build_pdf_preview_markdown(
         title="立项导航",
         source_url="https://www.kdocs.cn/l/ch33TCIxbqBq",

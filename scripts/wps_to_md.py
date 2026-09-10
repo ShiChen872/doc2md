@@ -16,9 +16,10 @@ Flow:
   5. If blocked presentation (`.pptx` / office_type=p): screenshot each slide
   6. If blocked / `.otl` intelligent doc: capture open/otl JSON + CDN / shapes raw images → Markdown
   7. If `.dbt` / office_type=d (download notAllowType): screenshot each web-viewer sheet
-  8. If `.pof` / `.pom` / `.pos` (WPS 思维导图 / 流程图, ProcessOn iframe): screenshot each canvas
-  9. If `.kw` / office_type=b (WPS 白板): screenshot the web canvas (must run before PPT; shares `.slide-uil-view`)
-  10. Otherwise run convert.py on the downloaded Office file (`.ksheet` is xlsx-compatible)
+  8. If blocked spreadsheet (`.xlsx` / `.ksheet` / office_type=s|k): screenshot each ET sheet tab
+  9. If `.pof` / `.pom` / `.pos` (WPS 思维导图 / 流程图, ProcessOn iframe): screenshot each canvas
+  10. If `.kw` / office_type=b (WPS 白板): screenshot the web canvas (must run before PPT; shares `.slide-uil-view`)
+  11. Otherwise run convert.py on the downloaded Office file (`.ksheet` is xlsx-compatible)
 """
 
 from __future__ import annotations
@@ -75,6 +76,11 @@ DB_VIEW_SEL = (
 )
 MAX_DBSHEET_SHEETS = 40
 KSHEET_EXTS = {".ksheet"}
+XLSX_EXTS = {".xlsx", ".xls", ".xlsm", ".xlsb", ".et", ".ett"}
+ET_GRID_SEL = ".et-grid-view-wrap"
+ET_SHEET_ITEM_SEL = ".et-status-sheet-item"
+ET_SHEET_NAME_SEL = ".sheet-name"
+MAX_SPREADSHEET_SHEETS = 40
 DBSHEET_EXTS = {".dbt", ".dbsheet"}
 DIAGRAM_EXTS = {".pof", ".pom", ".pos"}
 PO_IFRAME_SEL = "#dotviewIframe"
@@ -173,6 +179,15 @@ def is_ksheet_share(fname: str = "", office_type: str = "") -> bool:
     if Path(fname or "").suffix.lower() in KSHEET_EXTS:
         return True
     return str(office_type or "").lower() in {"k", "ksheet"}
+
+
+def is_spreadsheet_share(fname: str = "", office_type: str = "") -> bool:
+    """WPS ET / Excel / ksheet. Download path when allowed; web-viewer fallback when denied."""
+    if is_ksheet_share(fname, office_type=office_type):
+        return True
+    if Path(fname or "").suffix.lower() in XLSX_EXTS:
+        return True
+    return str(office_type or "").lower() in {"s", "et", "excel", "spreadsheet"}
 
 
 def is_dbsheet_share(fname: str = "", office_type: str = "") -> bool:
@@ -459,6 +474,8 @@ def build_pdf_preview_markdown(
         type_line = "> 类型: WPS 演示文稿分享（网页预览分页截图；分享禁止原文件下载）"
     elif kind == "dbsheet":
         type_line = "> 类型: WPS 多维表分享（网页预览分页截图；按左侧视图截图，原文件类型不允许下载）"
+    elif kind == "spreadsheet":
+        type_line = "> 类型: WPS 表格分享（网页预览分页截图；分享禁止原文件下载）"
     elif kind == "mindmap":
         type_line = "> 类型: WPS 思维导图分享（网页预览分页截图；按画布截图）"
     elif kind == "flowchart":
@@ -482,6 +499,11 @@ def build_pdf_preview_markdown(
             if headings and i - 1 < len(headings):
                 heading = str(headings[i - 1] or "").strip()
             lines.append(f"## {heading or f'视图 {i}'}")
+        elif kind == "spreadsheet":
+            heading = ""
+            if headings and i - 1 < len(headings):
+                heading = str(headings[i - 1] or "").strip()
+            lines.append(f"## {heading or f'工作表 {i}'}")
         elif kind in {"mindmap", "flowchart", "diagram", "whiteboard"}:
             heading = ""
             if headings and i - 1 < len(headings):
@@ -1281,6 +1303,122 @@ def capture_dbsheet_preview_pages(page, assets_dir: Path) -> list[tuple[Path, st
     return saved
 
 
+def _spreadsheet_sheet_items(page) -> list[tuple[int, str]]:
+    loc = page.locator(ET_SHEET_ITEM_SEL)
+    items: list[tuple[int, str]] = []
+    try:
+        count = loc.count()
+    except Exception:
+        return items
+    for i in range(count):
+        el = loc.nth(i)
+        try:
+            box = el.bounding_box()
+        except Exception:
+            box = None
+        if not box or box.get("height", 0) < 8 or box.get("width", 0) < 8:
+            continue
+        try:
+            name_el = el.locator(ET_SHEET_NAME_SEL).first
+            raw = name_el.inner_text(timeout=1000) if name_el.count() else el.inner_text()
+        except Exception:
+            raw = ""
+        items.append((i, _clean_dbsheet_name(raw)))
+    return items
+
+
+def _spreadsheet_clip(page) -> dict | None:
+    """Viewport clip of the ET grid, excluding ribbon / formula / sheet bar."""
+    try:
+        box = page.evaluate(
+            """() => {
+              const grid = document.querySelector('.et-grid-view-wrap')
+                || document.querySelector('.div_et_grid');
+              if (!grid) return null;
+              const r = grid.getBoundingClientRect();
+              const x = Math.max(0, Math.floor(r.left));
+              const y = Math.max(0, Math.floor(r.top));
+              const width = Math.floor(r.right - x);
+              const height = Math.floor(r.bottom - y);
+              if (width < 80 || height < 80) return null;
+              return {x, y, width, height};
+            }"""
+        )
+    except Exception:
+        return None
+    if not isinstance(box, dict):
+        return None
+    return box
+
+
+def capture_spreadsheet_preview_pages(page, assets_dir: Path) -> list[tuple[Path, str]]:
+    """Screenshot each visible ET / Excel / ksheet tab (download forbidden)."""
+    try:
+        page.set_viewport_size({"width": 1600, "height": 1000})
+    except Exception:
+        pass
+    try:
+        page.wait_for_selector(f"{ET_GRID_SEL}, {ET_SHEET_ITEM_SEL}", timeout=25000)
+    except Exception:
+        return []
+    page.wait_for_timeout(800)
+    items = _spreadsheet_sheet_items(page)
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    sess.clear_generated_assets(assets_dir, patterns=("page_*.png",))
+
+    def _shot(dest: Path) -> bool:
+        clip = _spreadsheet_clip(page)
+        try:
+            if clip:
+                page.screenshot(path=str(dest), clip=clip)
+            else:
+                view = page.locator(ET_GRID_SEL).first
+                if view.count() > 0:
+                    view.screenshot(path=str(dest))
+                else:
+                    page.screenshot(path=str(dest))
+        except Exception:
+            return False
+        return dest.is_file() and dest.stat().st_size >= 500
+
+    if not items:
+        dest = assets_dir / "page_001.png"
+        if _shot(dest):
+            return [(dest, "当前工作表")]
+        dest.unlink(missing_ok=True)
+        return []
+
+    saved: list[tuple[Path, str]] = []
+    seen: set[str] = set()
+    clicked: set[int] = set()
+    n = 0
+    while n < MAX_SPREADSHEET_SHEETS:
+        pending = [(idx, name) for idx, name in _spreadsheet_sheet_items(page) if idx not in clicked]
+        if not pending:
+            break
+        idx, name = pending[0]
+        clicked.add(idx)
+        try:
+            page.locator(ET_SHEET_ITEM_SEL).nth(idx).click(timeout=5000, force=True)
+        except Exception:
+            continue
+        page.wait_for_timeout(1200)
+        n += 1
+        dest = assets_dir / f"page_{n:03d}.png"
+        if not _shot(dest):
+            dest.unlink(missing_ok=True)
+            n -= 1
+            continue
+        digest = hashlib.sha256(dest.read_bytes()).hexdigest()
+        if digest in seen:
+            dest.unlink(missing_ok=True)
+            n -= 1
+            continue
+        seen.add(digest)
+        saved.append((dest, name or f"工作表 {len(saved) + 1}"))
+    return saved
+
+
 def _processon_frame(page):
     """ProcessOn editor/view frame inside WPS `#dotviewIframe` (not oauth)."""
     try:
@@ -1879,6 +2017,7 @@ def _share_to_markdown_body(
         is_pdf = is_pdf_share(fname, ftype=ftype)
         is_wpp = is_presentation_share(fname)
         is_dbt = is_dbsheet_share(fname)
+        is_sheet = is_spreadsheet_share(fname)
         is_diagram = is_wps_diagram_share(fname)
         is_board = is_wps_board_share(fname, ftype=ftype)
 
@@ -2160,6 +2299,9 @@ def _share_to_markdown_body(
                 is_dbt = is_dbt or is_dbsheet_share(
                     fname, office_type=str(env.get("office_type") or "")
                 )
+                is_sheet = is_sheet or is_spreadsheet_share(
+                    fname, office_type=str(env.get("office_type") or "")
+                )
                 is_diagram = is_diagram or is_wps_diagram_share(
                     fname, office_type=str(env.get("office_type") or "")
                 )
@@ -2401,6 +2543,52 @@ def _share_to_markdown_body(
             raise WpsError(
                 "Could not load the dbsheet web viewer. "
                 "Re-run wps_login.py, or export from the WPS UI and run convert.py."
+            )
+
+        # Spreadsheet / ksheet: download often ErrForbidDownloadLinkFile; screenshot each tab.
+        sheet_ready = False
+        if is_sheet or page.locator(ET_GRID_SEL).count() > 0:
+            try:
+                page.wait_for_selector(f"{ET_GRID_SEL}, {ET_SHEET_ITEM_SEL}", timeout=15000)
+                sheet_ready = page.locator(ET_GRID_SEL).count() > 0
+            except Exception:
+                sheet_ready = False
+        if sheet_ready:
+            stem = safe_stem(Path(fname).stem if fname else sid)
+            if output_md.name in {"out.md", "output.md"} or output_md.stem == "wps_out":
+                output_md = output_md.with_name(f"{stem}.md")
+                result["output"] = str(output_md)
+            assets_dir = output_md.parent / f"{output_md.stem}_assets"
+            captured = capture_spreadsheet_preview_pages(page, assets_dir)
+            browser.close()
+            if not captured:
+                raise WpsError(
+                    "Could not capture spreadsheet sheets. "
+                    "Re-run wps_login.py, or export the .xlsx from the WPS UI and run convert.py."
+                )
+            page_files = [p for p, _ in captured]
+            headings = [name for _, name in captured]
+            stats = write_pdf_preview_markdown(
+                title=Path(fname).stem or stem,
+                source_url=url,
+                output_md=output_md,
+                page_files=page_files,
+                kind="spreadsheet",
+                headings=headings,
+            )
+            result["mode"] = "et-preview"
+            result["convert"] = stats
+            result["pages"] = stats.get("pages")
+            result["sheets"] = headings
+            result["assets_dir"] = stats.get("assets_dir")
+            result["markdown_chars"] = stats.get("markdown_chars")
+            return result
+
+        if is_sheet:
+            browser.close()
+            raise WpsError(
+                "Could not load the spreadsheet web viewer. "
+                "Re-run wps_login.py, or export the .xlsx from the WPS UI and run convert.py."
             )
 
         # OTL path: scroll to lazy-load CDN images / shapes.

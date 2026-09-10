@@ -2,9 +2,12 @@
 
 ## Unreleased
 
-## v0.4.18
+## v0.4.19
 
 - WPS spreadsheet / ksheet: when original download is `ErrForbidDownloadLinkFile`, screenshot each ET web-viewer sheet tab (`.et-grid-view-wrap`), same visible-viewer fallback as PDF / PPT / `.dbt`. Download still becomes Markdown tables when allowed.
+
+## v0.4.18
+
 - Nested link rewrite no longer crashes on Markdown where the label is also a URL (for example `[https://host:8888/](https://host:8888/)`). Bad hrefs stay as-is; valid kdocs cards still rewrite.
 - The same nested share converts once. Later cards rewrite to the existing local Markdown instead of keeping the kdocs URL.
 - Comate install zip is `SKILL.md` + `scripts/` only (no `references/`), matching the pack that could finish the cloud security audit.

@@ -533,9 +533,9 @@ def safe_stem(name: str) -> str:
 def detect_office_ext(data: bytes) -> str:
     import io
 
-    if data[:4] == b"%PDF":
+    if sess.looks_like_pdf(data):
         return "pdf"
-    if data[:4] != b"PK\x03\x04":
+    if not sess.looks_like_zip(data):
         return "bin"
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as z:
@@ -576,11 +576,11 @@ def _ext_from_shape(entry: dict, body: bytes, ctype: str = "") -> str:
         return "jpg" if ext == "jpeg" else ext
     if "webp" in ctype:
         return "webp"
-    if "jpeg" in ctype or "jpg" in ctype or body.startswith(b"\xff\xd8"):
+    if "jpeg" in ctype or "jpg" in ctype or sess.looks_like_jpeg(body):
         return "jpg"
-    if "gif" in ctype or body[:6] in (b"GIF87a", b"GIF89a"):
+    if "gif" in ctype or sess.looks_like_gif(body):
         return "gif"
-    if body.startswith(b"\x89PNG\r\n\x1a\n"):
+    if sess.looks_like_png(body):
         return "png"
     return "png"
 
@@ -807,7 +807,7 @@ def match_images_to_pictures(
         ext = "png"
         if "webp" in ctype:
             ext = "webp"
-        elif "jpeg" in ctype or "jpg" in ctype or body[:3] == b"\xff\xd8":
+        elif "jpeg" in ctype or "jpg" in ctype or sess.looks_like_jpeg(body):
             ext = "jpg"
         candidates.append(
             {

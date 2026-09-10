@@ -152,7 +152,7 @@ The cloud package is **slim**: `SKILL.md` + `scripts/` only (`references/` stays
 `pack-comate.sh` injects `display_name: 文档转Markdown` into the zipped `SKILL.md` (git source stays validator-clean).
 
 ```bash
-./pack-comate.sh 0.4.19 /path/to/doc2md-0.4.19-comate.zip
+./pack-comate.sh 0.4.20 /path/to/doc2md-0.4.20-comate.zip
 ```
 
 GitHub source still includes `tests/` and `references/` (clone + pytest). Do not pack `tests/`, `README.md`, `CHANGELOG.md`, `references/`, or `agents/` into the Comate zip.

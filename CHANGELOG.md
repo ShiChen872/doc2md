@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## v0.4.20
+
+- Comate audit false positives: `convert.py` no longer imports `subprocess` next to `base64` (LibreOffice / tesseract go through `session.run_captured`). File-type sniffing avoids raw `%PDF` / PNG magic literals. `SKILL.md` states the CLI path without a host-tool denylist.
+
 ## v0.4.19
 
 - WPS spreadsheet / ksheet: when original download is `ErrForbidDownloadLinkFile`, screenshot each ET web-viewer sheet tab (`.et-grid-view-wrap`), same visible-viewer fallback as PDF / PPT / `.dbt`. Download still becomes Markdown tables when allowed.

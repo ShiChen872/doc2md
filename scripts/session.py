@@ -121,6 +121,35 @@ def clear_generated_assets(
                     pass
 
 
+def looks_like_pdf(data: bytes) -> bool:
+    return data[:4] == bytes((0x25, 0x50, 0x44, 0x46))
+
+
+def looks_like_zip(data: bytes) -> bool:
+    return data[:4] == bytes((0x50, 0x4B, 0x03, 0x04))
+
+
+def looks_like_png(data: bytes) -> bool:
+    return data[:8] == bytes((0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A))
+
+
+def looks_like_jpeg(data: bytes) -> bool:
+    return data[:2] == bytes((0xFF, 0xD8))
+
+
+def looks_like_gif(data: bytes) -> bool:
+    gif87 = bytes((0x47, 0x49, 0x46, 0x38, 0x37, 0x61))
+    gif89 = bytes((0x47, 0x49, 0x46, 0x38, 0x39, 0x61))
+    return data[:6] in (gif87, gif89)
+
+
+def run_captured(argv: list[str], *, timeout: int | None = None):
+    """Run a local helper binary (soffice, tesseract, …) with captured output."""
+    import subprocess
+
+    return subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+
+
 def should_clear_generated_assets(
     assets_dir: Path,
     *,

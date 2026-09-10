@@ -56,6 +56,8 @@ def download_share(url: str, output: Path | None, *, auto_login: bool = True) ->
     import io
     import zipfile
 
+    import session as sess
+
     try:
         url = normalize_share_url(url)
         sid = extract_share_id_strict(url)
@@ -145,9 +147,9 @@ def download_share(url: str, output: Path | None, *, auto_login: bool = True) ->
                         # fix extension if needed
                         if out.suffix.lower() in {"", ".bin"}:
                             ext = "bin"
-                            if data[:4] == b"%PDF":
+                            if sess.looks_like_pdf(data):
                                 ext = "pdf"
-                            elif data[:4] == b"PK\x03\x04":
+                            elif sess.looks_like_zip(data):
                                 try:
                                     with zipfile.ZipFile(io.BytesIO(data)) as z:
                                         names = z.namelist()

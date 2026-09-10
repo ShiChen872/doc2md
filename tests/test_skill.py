@@ -47,6 +47,20 @@ def test_skill_description_length_and_body_size():
     assert text.count("\n") + 1 <= 500
 
 
+def test_skill_avoids_override_wording():
+    text = SKILL.read_text(encoding="utf-8")
+    assert "Do not improvise" not in text
+    assert "\n**Never:**" not in text
+    assert "AppleScript" not in text
+    assert "WPS_SID" not in text
+
+
+def test_convert_py_has_no_subprocess_import():
+    src = (ROOT / "scripts" / "convert.py").read_text(encoding="utf-8")
+    assert "subprocess" not in src
+    assert "import base64" in src
+
+
 def test_skill_links_references():
     text = SKILL.read_text(encoding="utf-8")
     for name in ("wps.md", "feishu.md", "local.md", "pdf.md"):

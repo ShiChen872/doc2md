@@ -257,7 +257,6 @@ def pptx_to_pdf(pptx_path: Path, out_dir: Path) -> Path:
         office2pdf_err = e
 
     # 2) LibreOffice soffice — optional system dependency
-    import subprocess
     import tempfile
 
     soffice = _find_soffice()
@@ -277,7 +276,7 @@ def pptx_to_pdf(pptx_path: Path, out_dir: Path) -> Path:
                 str(tmp_path),
                 str(safe_in),
             ]
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            proc = sess.run_captured(cmd, timeout=300)
             pdf = tmp_path / "input.pdf"
             if pdf.is_file():
                 dest.write_bytes(pdf.read_bytes())
@@ -436,16 +435,13 @@ def ocr_image_text(image_path: Path) -> tuple[str, str]:
 
     # 2) tesseract CLI fallback
     import shutil
-    import subprocess
 
     tess = shutil.which("tesseract")
     if tess:
         for lang in ("chi_sim+eng", "chi_sim", "eng"):
             try:
-                proc = subprocess.run(
+                proc = sess.run_captured(
                     [tess, str(image_path), "stdout", "-l", lang, "--psm", "6"],
-                    capture_output=True,
-                    text=True,
                     timeout=120,
                 )
                 if proc.returncode == 0 and proc.stdout.strip():

@@ -89,6 +89,15 @@ def test_clear_generated_assets_skips_directories(tmp_path: Path):
     assert (assets / "keep.txt").read_text(encoding="utf-8") == "ok\n"
 
 
+def test_looks_like_sniff_helpers():
+    assert sess.looks_like_pdf(b"%PDF-1.4\n")
+    assert not sess.looks_like_pdf(b"plain")
+    assert sess.looks_like_jpeg(b"\xff\xd8\xff")
+    assert sess.looks_like_png(b"\x89PNG\r\n\x1a\nxxxx")
+    assert sess.looks_like_gif(b"GIF89a....")
+    assert not sess.looks_like_zip(b"plain")
+
+
 def test_should_clear_generated_assets_custom_nonempty(tmp_path: Path):
     default = tmp_path / "note_assets"
     custom = tmp_path / "shared"

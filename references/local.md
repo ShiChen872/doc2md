@@ -19,6 +19,6 @@ Also accepts `.otl.json` (WPS intelligent-doc JSON) via `otl_to_md.py`.
 - **DOCX / EPUB / HTML:** markitdown `keep_data_uris=True` on `convert()`, then decode data URIs into `<stem>_assets/`.
 - **PPTX:** per-slide **theme text** + **one full-slide screenshot**. PPTX→PDF via `office2pdf-python` (no system Office); PyMuPDF renders page PNGs.
 
-`--html` on `doc2md.py` writes a sidecar `.html` from the Markdown (same assets). Structured docs become headings/tables; slide screenshots stay images.
+`--html` on `doc2md.py` writes a sidecar `.html` from the Markdown (same assets). Structured docs become a handbook-style reading page; slide screenshots stay images.
 
 Tesseract is optional. If neither RapidOCR nor tesseract is available, the image is still copied and a note is added to the Markdown.

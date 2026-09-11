@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## v0.4.23
+
+- HTML sidecar uses a handbook-style reading page (gradient hero from title/quote/headings, emoji sections as cards). Images stay as relative files next to the `.html`, not inlined.
+
 ## v0.4.22
 
 - Comate audit: `convert.py` no longer imports `base64` or reaches `subprocess` (data URIs live in `datauri.py`; session helpers have no process runner). PPTX/OCR stay on office2pdf + RapidOCR. SKILL.md drops remaining override-style wording (`Apple Events`, `without --no-login`).

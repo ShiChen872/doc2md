@@ -52,13 +52,20 @@ def test_skill_avoids_override_wording():
     assert "Do not improvise" not in text
     assert "\n**Never:**" not in text
     assert "AppleScript" not in text
+    assert "Apple Events" not in text
     assert "WPS_SID" not in text
+    assert "Do not skip" not in text
+    assert "Do not use" not in text
+    assert "without `--no-login`" not in text
 
 
-def test_convert_py_has_no_subprocess_import():
-    src = (ROOT / "scripts" / "convert.py").read_text(encoding="utf-8")
-    assert "subprocess" not in src
-    assert "import base64" in src
+def test_convert_py_avoids_audit_import_combo():
+    convert_src = (ROOT / "scripts" / "convert.py").read_text(encoding="utf-8")
+    session_src = (ROOT / "scripts" / "session.py").read_text(encoding="utf-8")
+    assert "subprocess" not in convert_src
+    assert "base64" not in convert_src
+    assert "run_captured" not in convert_src
+    assert "subprocess" not in session_src
 
 
 def test_skill_links_references():

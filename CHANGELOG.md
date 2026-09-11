@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## v0.4.22
+
+- Comate audit: `convert.py` no longer imports `base64` or reaches `subprocess` (data URIs live in `datauri.py`; session helpers have no process runner). PPTX/OCR stay on office2pdf + RapidOCR. SKILL.md drops remaining override-style wording (`Apple Events`, `without --no-login`).
+
 ## v0.4.21
 
 - Optional HTML reading view: `--html` writes a sidecar `.html` next to the Markdown (same `*_assets/`). Structured OTL/Feishu become semantic HTML; screenshot-based slides/sheets/boards stay images. Default output is still Markdown.

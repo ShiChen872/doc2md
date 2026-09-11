@@ -143,13 +143,6 @@ def looks_like_gif(data: bytes) -> bool:
     return data[:6] in (gif87, gif89)
 
 
-def run_captured(argv: list[str], *, timeout: int | None = None):
-    """Run a local helper binary (soffice, tesseract, …) with captured output."""
-    import subprocess
-
-    return subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
-
-
 def should_clear_generated_assets(
     assets_dir: Path,
     *,

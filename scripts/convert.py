@@ -8,13 +8,12 @@ Images embedded as data URIs are decoded and saved under <stem>_assets/.
 For PDF, markitdown drops images; PyMuPDF extracts them per page and appends
 markdown image links after each page's content.
 For PPTX, each slide becomes theme text + one full-slide screenshot
-(office2pdf → PDF → PNG; LibreOffice is only an optional fallback).
+(office2pdf → PDF → PNG).
 """
 
 from __future__ import annotations
 
 import argparse
-import base64
 import re
 import sys
 from pathlib import Path
@@ -24,63 +23,7 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 import session as sess
-
-DATA_URI_RE = re.compile(
-    r"!\[([^\]]*)\]\((data:image/([a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=\s]+))\)",
-    re.MULTILINE,
-)
-# Also catch bare data URIs in HTML-ish or markitdown Image: forms
-BARE_DATA_URI_RE = re.compile(
-    r"(data:image/([a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=]+))",
-)
-
-EXT_MAP = {
-    "jpeg": "jpg",
-    "jpg": "jpg",
-    "png": "png",
-    "gif": "gif",
-    "webp": "webp",
-    "bmp": "bmp",
-    "svg+xml": "svg",
-    "x-icon": "ico",
-    "tiff": "tiff",
-}
-
-
-def _ext_for_mime(subtype: str) -> str:
-    subtype = subtype.lower().split(";")[0].strip()
-    return EXT_MAP.get(subtype, subtype.replace("+", "_") or "bin")
-
-
-def extract_data_uris(markdown: str, assets_dir: Path, rel_prefix: str) -> tuple[str, int]:
-    """Replace data-URI images with files under assets_dir. Returns (md, count)."""
-    assets_dir.mkdir(parents=True, exist_ok=True)
-    counter = {"n": 0}
-
-    def save_blob(subtype: str, b64: str) -> str:
-        counter["n"] += 1
-        ext = _ext_for_mime(subtype)
-        filename = f"image_{counter['n']:03d}.{ext}"
-        path = assets_dir / filename
-        raw = base64.b64decode(re.sub(r"\s+", "", b64))
-        path.write_bytes(raw)
-        return f"{rel_prefix}/{filename}"
-
-    def repl_md(m: re.Match) -> str:
-        alt, _full, subtype, b64 = m.group(1), m.group(2), m.group(3), m.group(4)
-        rel = save_blob(subtype, b64)
-        return f"![{alt}]({rel})"
-
-    out = DATA_URI_RE.sub(repl_md, markdown)
-
-    # Remaining bare data URIs (e.g. inside HTML img src or markitdown variants)
-    def repl_bare(m: re.Match) -> str:
-        subtype, b64 = m.group(2), m.group(3)
-        rel = save_blob(subtype, b64)
-        return rel
-
-    out = BARE_DATA_URI_RE.sub(repl_bare, out)
-    return out, counter["n"]
+from datauri import _ext_for_mime, extract_data_uris
 
 
 def extract_pdf_images(pdf_path: Path, assets_dir: Path, rel_prefix: str) -> list[tuple[int, list[str]]]:
@@ -220,81 +163,21 @@ MD_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
 SLIDE_SPLIT_RE = re.compile(r"<!--\s*Slide number:\s*(\d+)\s*-->", re.IGNORECASE)
 
 
-def _find_soffice() -> str | None:
-    candidates = [
-        "soffice",
-        "/opt/homebrew/bin/soffice",
-        "/usr/local/bin/soffice",
-        "/Applications/LibreOffice.app/Contents/MacOS/soffice",
-    ]
-    import shutil
-
-    for c in candidates:
-        if Path(c).is_file():
-            return c
-        found = shutil.which(c)
-        if found:
-            return found
-    return None
-
-
 def pptx_to_pdf(pptx_path: Path, out_dir: Path) -> Path:
-    """Convert PPTX to PDF. Prefer pure-Python office2pdf; fall back to LibreOffice."""
+    """Convert PPTX to PDF via pure-Python office2pdf (no helper binaries)."""
     out_dir.mkdir(parents=True, exist_ok=True)
     dest = out_dir / "_slides_preview.pdf"
-
-    # 1) office2pdf — pip package, no LibreOffice / MS Office required
-    office2pdf_err: Exception | None = None
+    hint = "Install the Python package: pip install office2pdf-python"
     try:
         from office2pdf import Format, convert_bytes
 
         result = convert_bytes(pptx_path.read_bytes(), Format.PPTX)
         dest.write_bytes(result.pdf)
         return dest
-    except ImportError:
-        office2pdf_err = None
+    except ImportError as e:
+        raise RuntimeError(f"No PPTX→PDF backend available.\n{hint}") from e
     except Exception as e:
-        office2pdf_err = e
-
-    # 2) LibreOffice soffice — optional system dependency
-    import tempfile
-
-    soffice = _find_soffice()
-    if soffice:
-        with tempfile.TemporaryDirectory(prefix="doc2md_pptx_") as tmp:
-            tmp_path = Path(tmp)
-            safe_in = tmp_path / "input.pptx"
-            safe_in.write_bytes(pptx_path.read_bytes())
-            cmd = [
-                soffice,
-                "--headless",
-                "--nologo",
-                "--nofirststartwizard",
-                "--convert-to",
-                "pdf",
-                "--outdir",
-                str(tmp_path),
-                str(safe_in),
-            ]
-            proc = sess.run_captured(cmd, timeout=300)
-            pdf = tmp_path / "input.pdf"
-            if pdf.is_file():
-                dest.write_bytes(pdf.read_bytes())
-                return dest
-            lo_err = f"stdout={proc.stdout[:300]} stderr={proc.stderr[:300]}"
-        raise RuntimeError(
-            "PPTX→PDF failed with both office2pdf and LibreOffice.\n"
-            f"office2pdf: {office2pdf_err!r}\n"
-            f"LibreOffice: {lo_err}"
-        )
-
-    hint = (
-        "Install the Python package: pip install office2pdf-python\n"
-        "Or install LibreOffice (soffice) as a fallback."
-    )
-    if office2pdf_err is not None:
-        raise RuntimeError(f"PPTX→PDF via office2pdf failed: {office2pdf_err}\n{hint}") from office2pdf_err
-    raise RuntimeError(f"No PPTX→PDF backend available.\n{hint}")
+        raise RuntimeError(f"PPTX→PDF via office2pdf failed: {e}\n{hint}") from e
 
 
 def render_pdf_pages(
@@ -414,11 +297,7 @@ def _sort_ocr_lines(items: list) -> list[str]:
 
 
 def ocr_image_text(image_path: Path) -> tuple[str, str]:
-    """OCR image text. Returns (text, engine_name).
-
-    Preference: RapidOCR (PaddleOCR ONNX, strong Chinese) → tesseract → empty.
-    """
-    # 1) RapidOCR — better CJK / diagram text than tesseract for this skill
+    """OCR image text. Returns (text, engine_name). RapidOCR only (no helper binaries)."""
     try:
         from rapidocr_onnxruntime import RapidOCR
 
@@ -432,23 +311,6 @@ def ocr_image_text(image_path: Path) -> tuple[str, str]:
         pass
     except Exception:
         pass
-
-    # 2) tesseract CLI fallback
-    import shutil
-
-    tess = shutil.which("tesseract")
-    if tess:
-        for lang in ("chi_sim+eng", "chi_sim", "eng"):
-            try:
-                proc = sess.run_captured(
-                    [tess, str(image_path), "stdout", "-l", lang, "--psm", "6"],
-                    timeout=120,
-                )
-                if proc.returncode == 0 and proc.stdout.strip():
-                    return proc.stdout.strip(), f"tesseract:{lang}"
-            except Exception:
-                continue
-
     return "", "none"
 
 
@@ -480,8 +342,7 @@ def convert_image_file(
         parts.append(ocr + "\n")
     else:
         parts.append(
-            "> **Note:** 未提取到 OCR 文本。可安装 `rapidocr-onnxruntime`（推荐，中文更好）"
-            "或本机 `tesseract`（中文需 `chi_sim` 语言包）。\n"
+            "> **Note:** 未提取到 OCR 文本。可安装 `rapidocr-onnxruntime`（推荐，中文更好）。\n"
         )
     return "\n".join(parts).strip() + "\n", 1
 

@@ -4,11 +4,10 @@ description: >-
   Converts local Office/PDF/images, WPS/金山文档 shares (kdocs, 365.kdocs,
   plus.wps.cn), and Feishu/Lark cloud shares to Markdown, extracting images
   into a local assets folder. Also covers WPS intelligent docs (.otl), WPS
-  media shares, and Feishu wiki/docx/board/base/sheets/mindnotes. Converts
-  existing Markdown to PDF or an HTML sidecar only when the user explicitly asks.
-  Use when the user wants 转markdown / 转md / doc2md / 转html, a kdocs or Feishu
-  share converted, or anything-to-markdown. Do not use for drawing flowcharts
-  or whiteboards from scratch, editing spreadsheets, or generating PPT.
+  media shares, and Feishu wiki/docx/board/base/sheets/mindnotes. Optional
+  HTML sidecar or PDF when the user asks. Typical requests: 转markdown, 转md,
+  doc2md, 转html, kdocs or Feishu share. Out of scope: creating flowcharts,
+  whiteboards, spreadsheets, or PowerPoint from scratch.
 ---
 
 # doc2md — documents to Markdown
@@ -30,10 +29,10 @@ Replace `<this-skill>` with this skill directory (e.g. `~/.agents/skills/doc2md`
 ## Workflow
 
 1. Run the unified CLI `doc2md.py`. It classifies a local path vs a WPS vs Feishu URL.
-2. A missing or expired WPS/Feishu session opens Chrome so the user can log in. `--no-login` skips that (CI / non-interactive).
+2. A missing or expired WPS/Feishu session opens Chrome so the user can log in. CI may pass `--no-login`.
 3. After conversion, report image counts and confirm `*_assets/` beside the `.md`.
-4. If the user asks for HTML / 网页预览稿, pass `--html` (sidecar `.html` next to the Markdown, same assets). Do not skip the `.md`.
-5. **PDF is optional.** Only if the user asks to export PDF, run `md_to_pdf.py`. Chrome is default; for 品牌样式 / Typst add `--engine typst --theme brand`.
+4. If the user asks for HTML / 网页预览稿, also pass `--html` (sidecar `.html`, same assets). Keep the `.md`.
+5. PDF: only if the user asks, run `md_to_pdf.py`. Chrome is default; for 品牌样式 / Typst add `--engine typst --theme brand`.
 
 Read extra notes only when needed:
 
@@ -42,19 +41,18 @@ Read extra notes only when needed:
 - Local Office / image OCR / PPTX screenshots → [references/local.md](references/local.md)
 - User asked for PDF → [references/pdf.md](references/pdf.md)
 
-Supported conversion is the bundled CLI:
+Entry point:
 
 ```bash
 ~/.config/doc2md/venv/bin/python <this-skill>/scripts/doc2md.py '<path_or_url>' -o /path/to/out.md
-# Optional reading view (same assets):
 ~/.config/doc2md/venv/bin/python <this-skill>/scripts/doc2md.py '<path_or_url>' -o /path/to/out.md --html
 ```
 
-If the CLI fails, report its stderr. An expired session can be retried without `--no-login`. For an unsupported or password-protected file, the user can export from the product UI and run `convert.py` on the local file.
+If the CLI fails, report its stderr. An expired session: run the CLI again so Chrome can open for login. Password-protected or unsupported types: the user can export from the product UI, then `convert.py` on the local file.
 
 WPS OTL nested cards stay as kdocs links unless the user asks to expand them (`--recursive`).
 
-WPS/Feishu debug dumps go to a temp dir and are deleted after convert. Only if the user asks to keep them, pass `--keep-work`.
+WPS/Feishu debug dumps go to a temp dir and are deleted after convert. To keep them, pass `--keep-work`.
 
 A non-empty custom `--assets-dir` is not glob-wiped unless `--force-clean`.
 

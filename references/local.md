@@ -17,7 +17,7 @@ Also accepts `.otl.json` (WPS intelligent-doc JSON) via `otl_to_md.py`.
 - **Images** (png/jpg/…): keep the original in `*_assets/`. OCR prefers **RapidOCR** (`rapidocr-onnxruntime`; better Chinese), then local `tesseract` (`chi_sim`). Architecture diagrams stay image-first; OCR is search aid.
 - **PDF:** markitdown extracts text; PyMuPDF extracts embedded images. Pages with almost no text are rendered to PNG and OCR'd. A fully scanned PDF uses OCR as the body.
 - **DOCX / EPUB / HTML:** markitdown `keep_data_uris=True` on `convert()`, then decode data URIs into `<stem>_assets/`.
-- **PPTX:** per-slide **theme text** + **one full-slide screenshot**. PPTX→PDF via `office2pdf-python` (no system Office); LibreOffice `soffice` is optional fallback; PyMuPDF renders page PNGs.
+- **PPTX:** per-slide **theme text** + **one full-slide screenshot**. PPTX→PDF via `office2pdf-python` (no system Office); PyMuPDF renders page PNGs.
 
 `--html` on `doc2md.py` writes a sidecar `.html` from the Markdown (same assets). Structured docs become headings/tables; slide screenshots stay images.
 

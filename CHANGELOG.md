@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## v0.4.21
+
+- Optional HTML reading view: `--html` writes a sidecar `.html` next to the Markdown (same `*_assets/`). Structured OTL/Feishu become semantic HTML; screenshot-based slides/sheets/boards stay images. Default output is still Markdown.
+
 ## v0.4.20
 
 - Comate audit false positives: `convert.py` no longer imports `subprocess` next to `base64` (LibreOffice / tesseract go through `session.run_captured`). File-type sniffing avoids raw `%PDF` / PNG magic literals. `SKILL.md` states the CLI path without a host-tool denylist.

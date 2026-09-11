@@ -20,6 +20,7 @@ Works with Cursor (desktop or CLI), Codex, and other Agent Skills–compatible h
 - **WPS 流程图 / 思维导图** (`.pom` / `.pof`): screenshot each ProcessOn canvas tab (not 画板/白板)
 - **WPS 白板** (`.kw`, `office_type=b`): screenshot the web canvas (handled before PPT; not Feishu 画板)
 - **Feishu 画板 / 多维表格 / 电子表格 / 思维笔记**: standalone `/board/` `/base/` `/sheets/` `/mindnotes/` screenshot the visible viewer; matching in-doc blocks screenshot instead of an HTML skip
+- **Markdown → HTML** (optional): `--html` writes a sidecar `.html` next to the `.md` (same `*_assets/`). Structured docs become semantic HTML; screenshot-based slides/sheets/boards stay images. Not a 1:1 layout restore.
 - **Markdown → PDF** (optional): `md_to_pdf.py` prints a local `.md` via Chrome by default (目录 / 页眉 / 页码). Print isolation: JS off, CSP, no `http(s)`. Page/slide screenshots are JPEG-compressed for print (`--no-compress` to keep PNG). `--engine typst --theme brand` is optional branded typesetting (needs Typst). `--engine=wps` is not supported (no silent fallback). WPS Save As PDF is a manual GUI fallback
 - **Feishu**: Playwright session (`feishu_login.py`) + in-page `PageMain` block tree → Markdown + assets; code fences keep language (enum mapped); file attachments and bookmarks from fallback blocks
 - **OTL images**: place by `sourceKey` / `imgID` (not array index); capture CDN and `/attachment/shapes` `raw`, keep the sharper (more pixels). If CDN is incomplete, use shapes by `sourceKey` only
@@ -55,13 +56,16 @@ Image files and **scanned/image-only PDFs** are OCR'd to recover text.
 ~/.config/doc2md/venv/bin/python scripts/doc2md.py 'https://365.kdocs.cn/l/XXXX' -o /path/to/out.md
 ~/.config/doc2md/venv/bin/python scripts/doc2md.py 'https://plus.wps.cn/view/media/l/XXXX' -o /path/to/out.md
 ~/.config/doc2md/venv/bin/python scripts/doc2md.py 'https://xxx.feishu.cn/wiki/XXXX' -o /path/to/out.md
+~/.config/doc2md/venv/bin/python scripts/doc2md.py 'https://365.kdocs.cn/l/XXXX' -o /path/to/out.md --html
 ```
 
 If a WPS or Feishu session is missing or expired, a Chrome window opens for you to log in; conversion then continues. Pass `--no-login` to skip that prompt.
 
 WPS OTL nested file cards stay as kdocs links by default. Pass `--recursive` (or `--max-depth N`) to convert those children into `{stem}_nested/*.md`.
 
-Agents (Cursor / Codex / Comate) should run `doc2md.py` for conversion to Markdown. Do not call WPS official APIs, replay `WPS_SID`, or drive Chrome/WPS with AppleScript. Run `md_to_pdf.py` only when the user asks for a PDF.
+`--html` writes `out.html` beside the Markdown (same `*_assets/`). It is a reading view, not a layout-accurate export.
+
+Agents (Cursor / Codex / Comate) should run `doc2md.py` for conversion to Markdown. Do not call WPS official APIs, replay `WPS_SID`, or drive Chrome/WPS with AppleScript. Run `md_to_pdf.py` only when the user asks for a PDF. Pass `--html` only when they ask for an HTML reading view.
 
 ### Local file
 
@@ -133,6 +137,7 @@ The config directory is `0700` and session files are `0600`. Plaintext `*_cookie
 | `feishu_login.py` | Headed Chrome login (Feishu/Lark) |
 | `feishu_to_md.py` | Feishu wiki/docx URL → Markdown |
 | `md_to_pdf.py` | Local Markdown → PDF (Chrome default; optional Typst brand theme) |
+| `md_to_html.py` | Local Markdown → HTML sidecar |
 
 See [SKILL.md](SKILL.md) for agent-oriented workflow. Type-specific notes are in `references/` (`wps.md`, `feishu.md`, `local.md`, `pdf.md`).
 
@@ -152,7 +157,7 @@ The cloud package is **slim**: `SKILL.md` + `scripts/` only (`references/` stays
 `pack-comate.sh` injects `display_name: 文档转Markdown` into the zipped `SKILL.md` (git source stays validator-clean).
 
 ```bash
-./pack-comate.sh 0.4.20 /path/to/doc2md-0.4.20-comate.zip
+./pack-comate.sh 0.4.21 /path/to/doc2md-0.4.21-comate.zip
 ```
 
 GitHub source still includes `tests/` and `references/` (clone + pytest). Do not pack `tests/`, `README.md`, `CHANGELOG.md`, `references/`, or `agents/` into the Comate zip.

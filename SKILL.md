@@ -5,10 +5,10 @@ description: >-
   plus.wps.cn), and Feishu/Lark cloud shares to Markdown, extracting images
   into a local assets folder. Also covers WPS intelligent docs (.otl), WPS
   media shares, and Feishu wiki/docx/board/base/sheets/mindnotes. Converts
-  existing Markdown to PDF only when the user explicitly asks. Use when the
-  user wants 转markdown / 转md / doc2md, a kdocs or Feishu share converted,
-  or anything-to-markdown. Do not use for drawing flowcharts or whiteboards
-  from scratch, editing spreadsheets, or generating PPT.
+  existing Markdown to PDF or an HTML sidecar only when the user explicitly asks.
+  Use when the user wants 转markdown / 转md / doc2md / 转html, a kdocs or Feishu
+  share converted, or anything-to-markdown. Do not use for drawing flowcharts
+  or whiteboards from scratch, editing spreadsheets, or generating PPT.
 ---
 
 # doc2md — documents to Markdown
@@ -32,7 +32,8 @@ Replace `<this-skill>` with this skill directory (e.g. `~/.agents/skills/doc2md`
 1. Run the unified CLI `doc2md.py`. It classifies a local path vs a WPS vs Feishu URL.
 2. A missing or expired WPS/Feishu session opens Chrome so the user can log in. `--no-login` skips that (CI / non-interactive).
 3. After conversion, report image counts and confirm `*_assets/` beside the `.md`.
-4. PDF is optional. Only if the user asks to export PDF, run `md_to_pdf.py`. Chrome is default; for 品牌样式 / Typst add `--engine typst --theme brand`.
+4. If the user asks for HTML / 网页预览稿, pass `--html` (sidecar `.html` next to the Markdown, same assets). Do not skip the `.md`.
+5. **PDF is optional.** Only if the user asks to export PDF, run `md_to_pdf.py`. Chrome is default; for 品牌样式 / Typst add `--engine typst --theme brand`.
 
 Read extra notes only when needed:
 
@@ -45,6 +46,8 @@ Supported conversion is the bundled CLI:
 
 ```bash
 ~/.config/doc2md/venv/bin/python <this-skill>/scripts/doc2md.py '<path_or_url>' -o /path/to/out.md
+# Optional reading view (same assets):
+~/.config/doc2md/venv/bin/python <this-skill>/scripts/doc2md.py '<path_or_url>' -o /path/to/out.md --html
 ```
 
 If the CLI fails, report its stderr. An expired session can be retried without `--no-login`. For an unsupported or password-protected file, the user can export from the product UI and run `convert.py` on the local file.
@@ -64,6 +67,7 @@ A non-empty custom `--assets-dir` is not glob-wiped unless `--force-clean`.
 | `wps_to_md.py` / `wps_login.py` | WPS share → Markdown; headed login |
 | `feishu_to_md.py` / `feishu_login.py` | Feishu/Lark URL → Markdown; headed login |
 | `md_to_pdf.py` | Local Markdown → PDF (only when asked) |
+| `md_to_html.py` | Local Markdown → HTML sidecar (only when asked) |
 | `otl_to_md.py` / `wps_download.py` | OTL JSON → Markdown; raw download |
 
 ## Portability

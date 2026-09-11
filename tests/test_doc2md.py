@@ -106,3 +106,4 @@ def test_cli_no_login_flag():
     assert "--insecure" in help_text
     assert "--keep-work" in help_text
     assert "--force-clean" in help_text
+    assert "--html" in help_text

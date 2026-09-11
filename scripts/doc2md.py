@@ -3,6 +3,7 @@
 
 Usage:
   doc2md.py <path_or_url> [-o OUTPUT.md]
+  doc2md.py <path_or_url> -o out.md --html   # also write out.html (same assets)
 
 Routes:
   local path              → convert.py
@@ -108,7 +109,7 @@ def run_convert(
     *,
     assets_dir: Path | None = None,
     force_clean: bool = False,
-) -> int:
+) -> tuple[int, Path | None]:
     from convert import convert
 
     input_path = Path(raw).expanduser().resolve()
@@ -116,7 +117,8 @@ def run_convert(
     print("OK")
     print("route: local")
     _print_result(stats)
-    return 0
+    written = Path(str(stats.get("output") or output)) if isinstance(stats, dict) else output
+    return 0, written if written.is_file() else output
 
 
 def run_wps(
@@ -126,7 +128,7 @@ def run_wps(
     auto_login: bool = True,
     max_depth: int = 0,
     keep_work: bool = False,
-) -> int:
+) -> tuple[int, Path | None]:
     from wps_to_md import WpsError, normalize_url, share_to_markdown
 
     try:
@@ -141,11 +143,12 @@ def run_wps(
         print(f"ERROR: {e}", file=sys.stderr)
         if not auto_login:
             print("Hint: re-run wps_login.py if the WPS session expired.", file=sys.stderr)
-        return 1
+        return 1, None
     print("OK")
     print("route: wps")
     _print_result(result)
-    return 0
+    written = Path(str(result.get("output") or output))
+    return 0, written
 
 
 def run_feishu(
@@ -157,7 +160,7 @@ def run_feishu(
     auto_login: bool = True,
     insecure: bool = False,
     keep_work: bool = False,
-) -> int:
+) -> tuple[int, Path | None]:
     from feishu_to_md import FeishuError, normalize_url, share_to_markdown
 
     try:
@@ -174,11 +177,12 @@ def run_feishu(
         print(f"ERROR: {e}", file=sys.stderr)
         if not auto_login:
             print("Hint: re-run feishu_login.py if the Feishu session expired.", file=sys.stderr)
-        return 1
+        return 1, None
     print("OK")
     print("route: feishu")
     _print_result(result)
-    return 0
+    written = Path(str(result.get("output") or output))
+    return 0, written
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -227,6 +231,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Keep .doc2md_work_* next to the Markdown (WPS/Feishu debug dumps). Default: temp/deleted.",
     )
+    parser.add_argument(
+        "--html",
+        action="store_true",
+        help="Also write a readable .html sidecar next to the Markdown (same assets)",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -241,35 +250,48 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if kind == "local":
             assets = args.assets_dir.expanduser().resolve() if args.assets_dir else None
-            return run_convert(
+            rc, written = run_convert(
                 args.input, output, assets_dir=assets, force_clean=args.force_clean
             )
-        if kind == "wps":
+        elif kind == "wps":
             from wps_to_md import resolve_nested_depth
 
             depth = resolve_nested_depth(recursive=args.recursive, max_depth=args.max_depth)
-            return run_wps(
+            rc, written = run_wps(
                 args.input,
                 output,
                 auto_login=not args.no_login,
                 max_depth=depth,
                 keep_work=args.keep_work,
             )
-        return run_feishu(
-            args.input,
-            output,
-            headed=args.headed,
-            timeout_ms=args.timeout_ms,
-            auto_login=not args.no_login,
-            insecure=args.insecure,
-            keep_work=args.keep_work,
-        )
+        else:
+            rc, written = run_feishu(
+                args.input,
+                output,
+                headed=args.headed,
+                timeout_ms=args.timeout_ms,
+                auto_login=not args.no_login,
+                insecure=args.insecure,
+                keep_work=args.keep_work,
+            )
     except ValueError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 1
     except Exception as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 1
+
+    if rc == 0 and args.html:
+        from md_to_html import write_sidecar_html
+
+        md_path = written if written and written.is_file() else output
+        try:
+            html_path = write_sidecar_html(md_path)
+        except Exception as e:
+            print(f"ERROR: HTML sidecar failed: {e}", file=sys.stderr)
+            return 1
+        print(f"html: {html_path}")
+    return rc
 
 
 if __name__ == "__main__":

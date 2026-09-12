@@ -528,6 +528,14 @@ def test_resolve_nested_depth():
         pass
 
 
+def test_warn_if_nested_depth(capsys):
+    wtm.warn_if_nested_depth(0)
+    wtm.warn_if_nested_depth(1)
+    err = capsys.readouterr().err
+    assert "many files" in err
+    assert err.count("Note:") == 1
+
+
 def test_rewrite_nested_share_links():
     md = (
         "> 来源: https://www.kdocs.cn/l/parentid\n\n"

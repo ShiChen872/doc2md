@@ -1693,6 +1693,11 @@ def convert_otl(otl_json: Path, md_out: Path, assets_dir: Path, source_url: str)
 NESTED_HREF_RE = re.compile(r"https?://[^\s)>\"\]]+", re.IGNORECASE)
 
 
+NESTED_SLOW_NOTE = (
+    "Note: nested card conversion can take a long time when the parent has many files."
+)
+
+
 def resolve_nested_depth(*, recursive: bool = False, max_depth: int | None = None) -> int:
     """`--recursive` means depth 1. Explicit `--max-depth` wins."""
     if max_depth is not None:
@@ -1700,6 +1705,11 @@ def resolve_nested_depth(*, recursive: bool = False, max_depth: int | None = Non
             raise ValueError("--max-depth must be >= 0")
         return max_depth
     return 1 if recursive else 0
+
+
+def warn_if_nested_depth(depth: int, *, file=None) -> None:
+    if depth > 0:
+        print(NESTED_SLOW_NOTE, file=file or sys.stderr)
 
 
 def relative_nested_path(dest: Path, start_dir: Path) -> str:
@@ -2721,6 +2731,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         depth = resolve_nested_depth(recursive=args.recursive, max_depth=args.max_depth)
+        warn_if_nested_depth(depth)
     except ValueError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 1

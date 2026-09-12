@@ -107,6 +107,47 @@ def test_decorate_callouts_wraps_emoji_sections():
     assert "image_003.png" in out.split('class="canon"')[1].split("<img")[1]
 
 
+def test_decorate_callouts_lifts_diagram_out_of_list():
+    html = (
+        "<p>🎤<strong> 客户口试</strong></p>\n"
+        "<ul>\n"
+        "<li><strong>客户问：</strong>为什么不好用？</li>\n"
+        "<li><strong>合格回答：</strong>先看任务和上下文。<br>\n"
+        "📖<strong> 本章配套图解｜</strong>第1课</li>\n"
+        "</ul>\n"
+        "<p><img src='out_assets/image_003.png'/></p>\n"
+    )
+    out = mth.decorate_callouts(html)
+    exam = out.split('class="exam"')[1].split("</div>")[0]
+    assert "合格回答" in exam
+    assert "本章配套图解" not in exam
+    assert 'class="diagram"' in out
+    diagram = out.split('class="diagram"')[1].split("</div>")[0]
+    assert "本章配套图解" in diagram
+    assert "<img" in out
+
+
+def test_handbook_html_lifts_folded_diagram_from_markdown():
+    md = (
+        "# 应知应会手册\n\n"
+        "## 第一章｜任务\n\n"
+        "🎤** 客户口试**\n\n"
+        "- **客户问：**为什么不好用？\n"
+        "- **合格回答：**先看任务和上下文。\n"
+        "📖** 本章配套图解｜**第1课\n\n"
+        "![图](out_assets/image_003.png)\n"
+    )
+    html = mth.build_sidecar_html(md)
+    assert 'class="exam"' in html
+    assert 'class="diagram"' in html
+    exam = html.split('class="exam"')[1].split("</div>")[0]
+    assert "合格回答" in exam
+    assert "本章配套图解" not in exam
+    diagram = html.split('class="diagram"')[1].split("</div>")[0]
+    assert "第1课" in diagram
+    assert html.index('class="diagram"') < html.index("image_003.png")
+
+
 def test_lead_quote_skips_converter_metadata():
     md = (
         "> 来源: https://example.com/x\n"

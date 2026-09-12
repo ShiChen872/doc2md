@@ -307,8 +307,63 @@ def _has_img(block: str) -> bool:
     return bool(re.search(r"<img\b", block or "", re.IGNORECASE))
 
 
+def _callout_emoji_alt() -> str:
+    return "|".join(re.escape(emoji) for emoji, _ in _CALLOUT_MARKERS)
+
+
+def _split_li_callout(inner: str) -> tuple[str, str | None]:
+    """Peel a trailing handbook callout out of a list item."""
+    alt = _callout_emoji_alt()
+    after_br = re.search(rf"(<br\s*/?>)\s*({alt})", inner or "", re.IGNORECASE)
+    if after_br:
+        kept = (inner or "")[: after_br.start()].rstrip()
+        lifted = (inner or "")[after_br.start(2) :].strip()
+        return kept, lifted or None
+    plain = _plain(inner)
+    if any(plain.startswith(emoji) for emoji, _ in _CALLOUT_MARKERS):
+        return "", (inner or "").strip()
+    return inner, None
+
+
+def lift_callouts_from_lists(html: str) -> str:
+    """Markdown folds 📖 after a list into the last <li>; put it back as a <p>."""
+    blocks = _iter_blocks(html)
+    if not blocks:
+        return html
+    out: list[str] = []
+    for block in blocks:
+        if not re.match(r"<(ul|ol)\b", block or "", re.IGNORECASE):
+            out.append(block)
+            continue
+        closes = list(re.finditer(r"</li>", block, re.IGNORECASE))
+        opens = list(re.finditer(r"<li\b[^>]*>", block, re.IGNORECASE))
+        if not closes or not opens:
+            out.append(block)
+            continue
+        close = closes[-1]
+        open_candidates = [m for m in opens if m.end() <= close.start()]
+        if not open_candidates:
+            out.append(block)
+            continue
+        open_m = open_candidates[-1]
+        kept, lifted = _split_li_callout(block[open_m.end() : close.start()])
+        if not lifted:
+            out.append(block)
+            continue
+        if kept.strip():
+            new_list = block[: open_m.end()] + kept + block[close.start() :]
+            out.append(new_list)
+        else:
+            new_list = (block[: open_m.start()] + block[close.end() :]).strip()
+            if re.search(r"<li\b", new_list, re.IGNORECASE):
+                out.append(new_list)
+        out.append(f"<p>{lifted}</p>")
+    return "\n".join(out)
+
+
 def decorate_callouts(html: str) -> str:
     """Wrap emoji-led handbook sections (story / 必背 / 口试) in colored cards."""
+    html = lift_callouts_from_lists(html)
     blocks = _iter_blocks(html)
     if not blocks:
         return html

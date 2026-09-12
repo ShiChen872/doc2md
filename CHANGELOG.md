@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## v0.4.27
+
+- HTML sidecar: 📖 diagram lines that Markdown folded into a list item become their own card. OTL now ends a list with a blank line so later converts do not fold them.
+- `--recursive` / `--max-depth` prints a note that a parent with many nested cards can take a long time.
+
 ## v0.4.26
 
 - HTML sidecar: PPT / page-screenshot decks become a talk script (hero + N 页讲稿, one card per 第一页 with image above notes). Handbook pages stay as they are.

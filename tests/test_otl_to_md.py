@@ -68,6 +68,21 @@ def test_paragraph_ordered_list():
     assert "1. 重新开始" in md
 
 
+def test_list_then_paragraph_has_blank_line():
+    raw = _doc(
+        _para("合格回答", list_type="bullet"),
+        {
+            "type": "paragraph",
+            "content": [
+                {"type": "emoji", "attrs": {"emoji": "📖"}},
+                {"type": "text", "text": " 本章配套图解", "marks": [{"type": "bold"}]},
+            ],
+        },
+    )
+    md = otl.otl_to_markdown(raw)
+    assert "- 合格回答\n\n📖 **" in md
+
+
 def test_emoji_then_bold_has_space():
     raw = _doc(
         {

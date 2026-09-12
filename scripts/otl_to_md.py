@@ -309,6 +309,8 @@ def otl_to_markdown(
 
         lt = str(attrs.get("listType") or "") if t == "paragraph" else ""
         if not lt:
+            if list_state["kind"] and lines and lines[-1] != "":
+                lines.append("")
             reset_list()
 
         inline = render_inline(node).strip()

@@ -254,9 +254,10 @@ def main(argv: list[str] | None = None) -> int:
                 args.input, output, assets_dir=assets, force_clean=args.force_clean
             )
         elif kind == "wps":
-            from wps_to_md import resolve_nested_depth
+            from wps_to_md import resolve_nested_depth, warn_if_nested_depth
 
             depth = resolve_nested_depth(recursive=args.recursive, max_depth=args.max_depth)
+            warn_if_nested_depth(depth)
             rc, written = run_wps(
                 args.input,
                 output,

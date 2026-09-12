@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## v0.4.24
+
+- OTL: space after emoji before bold/italic; ordered lists count `1.` `2.` instead of repeating `1.`
+- WPS: placeholder `-o out.md` is renamed to the share title for Office downloads and OTL, same as preview paths
+- SKILL.md includes Comate-usable type notes (slim zip has no `references/`)
+
 ## v0.4.23
 
 - HTML sidecar uses a handbook-style reading page (gradient hero from title/quote/headings, emoji sections as cards). Images stay as relative files next to the `.html`, not inlined.

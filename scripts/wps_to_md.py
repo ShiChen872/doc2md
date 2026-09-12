@@ -530,6 +530,14 @@ def safe_stem(name: str) -> str:
     return SAFE_NAME_RE.sub("_", base).strip("._") or "wps_document"
 
 
+def titled_output_md(output_md: Path, fname: str | None, sid: str) -> Path:
+    """If the caller used a placeholder name, adopt the share's document stem."""
+    stem = safe_stem(Path(fname).stem if fname else sid)
+    if output_md.name in {"out.md", "output.md"} or output_md.stem == "wps_out":
+        return output_md.with_name(f"{stem}.md")
+    return output_md
+
+
 def detect_office_ext(data: bytes) -> str:
     import io
 
@@ -2023,10 +2031,8 @@ def _share_to_markdown_body(
 
         # --- media / video share: Markdown card + cover (no Office body) ---
         if is_media and file_id and group_id:
-            stem = safe_stem(Path(fname).stem if fname else sid)
-            if output_md.name in {"out.md", "output.md"} or output_md.stem == "wps_out":
-                output_md = output_md.with_name(f"{stem}.md")
-                result["output"] = str(output_md)
+            output_md = titled_output_md(output_md, fname, sid)
+            result["output"] = str(output_md)
 
             assets_dir = output_md.parent / f"{output_md.stem}_assets"
             assets_dir.mkdir(parents=True, exist_ok=True)
@@ -2227,6 +2233,8 @@ def _share_to_markdown_body(
                 break
 
         if downloaded and downloaded.is_file():
+            output_md = titled_output_md(output_md, fname, sid)
+            result["output"] = str(output_md)
             result["mode"] = "office"
             result["source_file"] = str(downloaded)
             browser.close()
@@ -2322,10 +2330,8 @@ def _share_to_markdown_body(
             except Exception:
                 pdf_ready = False
         if pdf_ready:
-            stem = safe_stem(Path(fname).stem if fname else sid)
-            if output_md.name in {"out.md", "output.md"} or output_md.stem == "wps_out":
-                output_md = output_md.with_name(f"{stem}.md")
-                result["output"] = str(output_md)
+            output_md = titled_output_md(output_md, fname, sid)
+            result["output"] = str(output_md)
             assets_dir = output_md.parent / f"{output_md.stem}_assets"
             page_files = capture_pdf_preview_pages(page, assets_dir)
             browser.close()
@@ -2357,10 +2363,8 @@ def _share_to_markdown_body(
             except Exception:
                 board_ready = False
         if board_ready:
-            stem = safe_stem(Path(fname).stem if fname else sid)
-            if output_md.name in {"out.md", "output.md"} or output_md.stem == "wps_out":
-                output_md = output_md.with_name(f"{stem}.md")
-                result["output"] = str(output_md)
+            output_md = titled_output_md(output_md, fname, sid)
+            result["output"] = str(output_md)
             assets_dir = output_md.parent / f"{output_md.stem}_assets"
             captured = capture_board_preview_pages(page, assets_dir)
             if not captured:
@@ -2411,10 +2415,8 @@ def _share_to_markdown_body(
             except Exception:
                 wpp_ready = False
         if wpp_ready:
-            stem = safe_stem(Path(fname).stem if fname else sid)
-            if output_md.name in {"out.md", "output.md"} or output_md.stem == "wps_out":
-                output_md = output_md.with_name(f"{stem}.md")
-                result["output"] = str(output_md)
+            output_md = titled_output_md(output_md, fname, sid)
+            result["output"] = str(output_md)
             assets_dir = output_md.parent / f"{output_md.stem}_assets"
             page_files = capture_wpp_preview_pages(page, assets_dir)
             browser.close()
@@ -2450,10 +2452,8 @@ def _share_to_markdown_body(
             except Exception:
                 diagram_ready = False
         if diagram_ready:
-            stem = safe_stem(Path(fname).stem if fname else sid)
-            if output_md.name in {"out.md", "output.md"} or output_md.stem == "wps_out":
-                output_md = output_md.with_name(f"{stem}.md")
-                result["output"] = str(output_md)
+            output_md = titled_output_md(output_md, fname, sid)
+            result["output"] = str(output_md)
             assets_dir = output_md.parent / f"{output_md.stem}_assets"
             captured = capture_diagram_preview_pages(page, assets_dir)
             kind = _diagram_kind(fname, _processon_frame(page))
@@ -2508,10 +2508,8 @@ def _share_to_markdown_body(
             except Exception:
                 dbt_ready = False
         if dbt_ready:
-            stem = safe_stem(Path(fname).stem if fname else sid)
-            if output_md.name in {"out.md", "output.md"} or output_md.stem == "wps_out":
-                output_md = output_md.with_name(f"{stem}.md")
-                result["output"] = str(output_md)
+            output_md = titled_output_md(output_md, fname, sid)
+            result["output"] = str(output_md)
             assets_dir = output_md.parent / f"{output_md.stem}_assets"
             captured = capture_dbsheet_preview_pages(page, assets_dir)
             browser.close()
@@ -2554,10 +2552,8 @@ def _share_to_markdown_body(
             except Exception:
                 sheet_ready = False
         if sheet_ready:
-            stem = safe_stem(Path(fname).stem if fname else sid)
-            if output_md.name in {"out.md", "output.md"} or output_md.stem == "wps_out":
-                output_md = output_md.with_name(f"{stem}.md")
-                result["output"] = str(output_md)
+            output_md = titled_output_md(output_md, fname, sid)
+            result["output"] = str(output_md)
             assets_dir = output_md.parent / f"{output_md.stem}_assets"
             captured = capture_spreadsheet_preview_pages(page, assets_dir)
             browser.close()
@@ -2638,6 +2634,8 @@ def _share_to_markdown_body(
 
         aligned, order_name = fill_images_cdn_or_shapes(pictures, cdn_ordered, shaped)
 
+        output_md = titled_output_md(output_md, fname, sid)
+        result["output"] = str(output_md)
         assets_dir = output_md.parent / f"{output_md.stem}_assets"
         assets_dir.mkdir(parents=True, exist_ok=True)
         sess.clear_generated_assets(assets_dir, patterns=("image_*",))

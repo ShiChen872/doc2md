@@ -69,6 +69,23 @@ def iter_otl_picture_attrs(raw: dict) -> list[dict]:
     return pics
 
 
+def _join_inline_parts(parts: list[str]) -> str:
+    """Keep a space between emoji/plain text and a following markdown marker."""
+    out = ""
+    for part in parts:
+        if not part:
+            continue
+        if (
+            out
+            and not out[-1].isspace()
+            and not part[0].isspace()
+            and part[0] in "*_`["
+        ):
+            out += " "
+        out += part
+    return out
+
+
 def render_inline(node: dict) -> str:
     if node.get("type") == "text":
         t = node.get("text") or ""
@@ -93,8 +110,8 @@ def render_inline(node: dict) -> str:
         attrs = node.get("attrs") if isinstance(node.get("attrs"), dict) else {}
         link = wps_document_link_md(attrs)
         return f" {link}" if link else ""
-    return "".join(
-        render_inline(c) for c in (node.get("content") or []) if isinstance(c, dict)
+    return _join_inline_parts(
+        [render_inline(c) for c in (node.get("content") or []) if isinstance(c, dict)]
     )
 
 
@@ -262,6 +279,22 @@ def otl_to_markdown(
     image_map = dict(image_map or {})
     pic_i = {"n": 0}
     lines: list[str] = []
+    list_state = {"kind": "", "n": 0}
+
+    def reset_list() -> None:
+        list_state["kind"] = ""
+        list_state["n"] = 0
+
+    def list_prefix(lt: str) -> str:
+        if "bullet" in lt:
+            list_state["kind"] = "bullet"
+            list_state["n"] = 0
+            return "- "
+        if list_state["kind"] != "ordered":
+            list_state["kind"] = "ordered"
+            list_state["n"] = 0
+        list_state["n"] += 1
+        return f"{list_state['n']}. "
 
     def emit(node: object, depth: int = 0) -> None:
         if not isinstance(node, dict) or depth > 50:
@@ -273,6 +306,10 @@ def otl_to_markdown(
             for c in node.get("content") or []:
                 emit(c, depth + 1)
             return
+
+        lt = str(attrs.get("listType") or "") if t == "paragraph" else ""
+        if not lt:
+            reset_list()
 
         inline = render_inline(node).strip()
 
@@ -335,10 +372,8 @@ def otl_to_markdown(
             return
 
         if t == "paragraph":
-            lt = str(attrs.get("listType") or "")
             if lt and inline:
-                prefix = "- " if "bullet" in lt else "1. "
-                lines.append(prefix + inline)
+                lines.append(list_prefix(lt) + inline)
                 return
             if inline:
                 lines.append(inline)

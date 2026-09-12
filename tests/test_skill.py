@@ -45,6 +45,8 @@ def test_skill_description_length_and_body_size():
     desc = " ".join(x for x in lines if x)
     assert 1 <= len(desc) <= 1024
     assert text.count("\n") + 1 <= 500
+    assert "## Type notes" in text
+    assert "`.dbt`" in text
 
 
 def test_skill_avoids_override_wording():
@@ -109,3 +111,6 @@ def test_pack_comate_zip_is_slim(tmp_path: Path):
     assert "README.md" not in names
     assert "CHANGELOG.md" not in names
     assert "display_name: 文档转Markdown" in skill
+    assert "## Type notes" in skill
+    assert "`.dbt`" in skill
+    assert "--recursive" in skill

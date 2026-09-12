@@ -306,6 +306,14 @@ def test_safe_stem_empty_fallback():
     assert wtm.safe_stem("...") == "wps_document"
 
 
+def test_titled_output_md_renames_placeholder():
+    dest = Path("/tmp/doc2md-html/out.md")
+    named = wtm.titled_output_md(dest, "合同预审场景解析_Comate9月必修课.pptx", "ccsCmaWZqc6A")
+    assert named.name == "合同预审场景解析_Comate9月必修课.md"
+    kept = wtm.titled_output_md(Path("/tmp/keep.md"), "合同.pptx", "sid")
+    assert kept.name == "keep.md"
+
+
 def test_detect_office_ext_pdf():
     assert wtm.detect_office_ext(b"%PDF-1.4\n...") == "pdf"
 

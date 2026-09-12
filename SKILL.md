@@ -34,7 +34,21 @@ Replace `<this-skill>` with this skill directory (e.g. `~/.agents/skills/doc2md`
 4. If the user asks for HTML / 网页预览稿, also pass `--html` (handbook-style sidecar `.html`, same assets). Keep the `.md`.
 5. PDF: only if the user asks, run `md_to_pdf.py`. Chrome is default; for 品牌样式 / Typst add `--engine typst --theme brand`.
 
-Read extra notes only when needed:
+## Type notes
+
+Comate install zip is `SKILL.md` + `scripts/` only. Use this list on that host. A local git checkout also has longer notes under `references/`.
+
+- **PPT / 演示**: original download is often denied; then screenshot each slide. A knowledge-wiki `/wiki/l/` URL resolves to the inner file share.
+- **Excel / ksheet**: download becomes Markdown tables when allowed; otherwise screenshot each bottom sheet tab (visible grid, not a full dump).
+- **`.dbt` 多维表**: cannot download; screenshot each left-rail view (grid / form / dashboard).
+- **流程图 / 思维导图** (`.pom` / `.pof`): ProcessOn canvas tabs. Skip Office unzip.
+- **白板** (`.kw`): screenshot the canvas. Handle before PPT (same slide viewer class).
+- **PDF 分享**: download denied → one image per web-viewer page + OCR.
+- **媒体视频**: original file is often blocked; with ffmpeg, remux the share-page HLS preview (transcoded, not the upload).
+- **OTL**: parse `open/otl` JSON. Nested file cards stay kdocs links unless `--recursive`.
+- **飞书** `/board/` `/base/` `/sheets/` `/mindnotes/`: screenshot the visible viewer. Poll stays a comment. Public-share attachments are often missing.
+
+Local extra notes:
 
 - WPS / kdocs / plus.wps / `.otl` / nested cards → [references/wps.md](references/wps.md)
 - Feishu / Lark URL → [references/feishu.md](references/feishu.md)

@@ -56,9 +56,31 @@ def test_paragraph_bullet_list():
 
 
 def test_paragraph_ordered_list():
-    raw = _doc(_para("第一", list_type="ordered"))
+    raw = _doc(
+        _para("第一", list_type="ordered"),
+        _para("第二", list_type="ordered"),
+        {"type": "heading2", "attrs": {"level": 2}, "content": [_text_node("下一节")]},
+        _para("重新开始", list_type="ordered"),
+    )
     md = otl.otl_to_markdown(raw)
     assert "1. 第一" in md
+    assert "2. 第二" in md
+    assert "1. 重新开始" in md
+
+
+def test_emoji_then_bold_has_space():
+    raw = _doc(
+        {
+            "type": "paragraph",
+            "content": [
+                {"type": "emoji", "attrs": {"emoji": "🎬"}},
+                {"type": "text", "text": " 先看一个故事", "marks": [{"type": "bold"}]},
+            ],
+        }
+    )
+    md = otl.otl_to_markdown(raw)
+    assert "🎬 **" in md
+    assert "🎬**" not in md
 
 
 def test_picture_with_image_names():

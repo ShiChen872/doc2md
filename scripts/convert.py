@@ -7,8 +7,8 @@ Usage:
 Images embedded as data URIs are decoded and saved under <stem>_assets/.
 For PDF, markitdown drops images; PyMuPDF extracts them per page and appends
 markdown image links after each page's content.
-For PPTX, each slide becomes theme text + one full-slide screenshot
-(office2pdf → PDF → PNG).
+For PPTX, each slide becomes speaker notes (or theme text) + one
+full-slide screenshot, headed 第一页 / 第二页 (office2pdf → PDF → PNG).
 """
 
 from __future__ import annotations
@@ -161,6 +161,63 @@ def inject_pdf_scan_ocr(
 
 MD_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
 SLIDE_SPLIT_RE = re.compile(r"<!--\s*Slide number:\s*(\d+)\s*-->", re.IGNORECASE)
+SLIDE_NOTES_RE = re.compile(r"^###\s*Notes:?\s*$", re.IGNORECASE | re.MULTILINE)
+_CN_DIGITS = "零一二三四五六七八九"
+
+
+def cn_int(n: int) -> str:
+    """1 → 一, 15 → 十五, 21 → 二十一."""
+    if n < 0:
+        return str(n)
+    if n < 10:
+        return _CN_DIGITS[n]
+    if n == 10:
+        return "十"
+    if n < 20:
+        return "十" + _CN_DIGITS[n - 10]
+    if n < 100:
+        tens, ones = divmod(n, 10)
+        head = _CN_DIGITS[tens] + "十"
+        return head if ones == 0 else head + _CN_DIGITS[ones]
+    return str(n)
+
+
+def cn_page_heading(n: int) -> str:
+    return f"第{cn_int(n)}页"
+
+
+def split_slide_theme_and_notes(body: str) -> tuple[str, str]:
+    """Split markitdown slide body into (theme text, speaker notes)."""
+    text = (body or "").strip()
+    if not text:
+        return "", ""
+    match = SLIDE_NOTES_RE.search(text)
+    if not match:
+        return text, ""
+    theme = text[: match.start()].strip()
+    notes = text[match.end() :].strip()
+    return theme, notes
+
+
+def format_pptx_slides_markdown(texts: list[str], slide_refs: list[str]) -> str:
+    """One section per page: speaker notes (or theme text) + that slide's image."""
+    n = max(len(texts), len(slide_refs), 0)
+    blocks: list[str] = [
+        "> **Note:** PPTX is exported as per-page speaker notes + full-slide screenshots "
+        "(via office2pdf; not individual icons).\n"
+    ]
+    for i in range(n):
+        title = cn_page_heading(i + 1)
+        raw = texts[i].strip() if i < len(texts) else ""
+        theme, notes = split_slide_theme_and_notes(raw)
+        body = notes or theme
+        blocks.append(f"## {title}\n")
+        if body:
+            blocks.append(body + "\n")
+        if i < len(slide_refs):
+            blocks.append(f"![{title}]({slide_refs[i]})\n")
+        blocks.append("")
+    return "\n".join(blocks).strip() + "\n"
 
 
 def pptx_to_pdf(pptx_path: Path, out_dir: Path) -> Path:
@@ -240,7 +297,7 @@ def extract_slide_texts(pptx_path: Path) -> list[str]:
 def convert_pptx_as_slides(
     pptx_path: Path, assets_dir: Path, rel_prefix: str, *, dpi: int = 144, clear: bool = True
 ) -> tuple[str, int]:
-    """Build Markdown: per-slide theme text + one full-slide screenshot.
+    """Build Markdown: per-page speaker notes + one full-slide screenshot.
 
     Does NOT extract individual icons/pictures from the deck.
     """
@@ -254,22 +311,7 @@ def convert_pptx_as_slides(
         pdf = pptx_to_pdf(pptx_path, Path(tmp))
         slide_refs = render_pdf_pages(pdf, assets_dir, rel_prefix, dpi=dpi, clear=False)
 
-    n = max(len(texts), len(slide_refs))
-    blocks: list[str] = [
-        "> **Note:** PPTX is exported as per-slide text + full-slide screenshots "
-        "(via office2pdf; not individual icons).\n"
-    ]
-    for i in range(n):
-        num = i + 1
-        text = texts[i].strip() if i < len(texts) else ""
-        blocks.append(f"## Slide {num}\n")
-        if text:
-            blocks.append(text + "\n")
-        if i < len(slide_refs):
-            blocks.append(f"![Slide {num}]({slide_refs[i]})\n")
-        blocks.append("")
-
-    return "\n".join(blocks).strip() + "\n", len(slide_refs)
+    return format_pptx_slides_markdown(texts, slide_refs), len(slide_refs)
 
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tif", ".tiff"}

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## v0.4.25
+
+- PPTX Markdown is split by 第一页 / 第二页: speaker notes plus that page's screenshot. `### Notes:` headings are dropped so the HTML TOC stays one entry per page.
+
 ## v0.4.24
 
 - OTL: space after emoji before bold/italic; ordered lists count `1.` `2.` instead of repeating `1.`

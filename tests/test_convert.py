@@ -210,3 +210,50 @@ def test_convert_image_file_skips_directory_named_image(tmp_path: Path):
 
 def test_inject_pdf_scan_ocr_empty():
     assert conv.inject_pdf_scan_ocr("body", []) == "body"
+
+
+def test_cn_page_heading():
+    assert conv.cn_page_heading(1) == "第一页"
+    assert conv.cn_page_heading(2) == "第二页"
+    assert conv.cn_page_heading(10) == "第十页"
+    assert conv.cn_page_heading(11) == "第十一页"
+    assert conv.cn_page_heading(15) == "第十五页"
+    assert conv.cn_page_heading(20) == "第二十页"
+    assert conv.cn_page_heading(21) == "第二十一页"
+
+
+def test_split_slide_theme_and_notes():
+    theme, notes = conv.split_slide_theme_and_notes(
+        "封面标题\n\n### Notes:\n1. 开场\n2. 框架"
+    )
+    assert theme == "封面标题"
+    assert "开场" in notes
+    assert "框架" in notes
+    only, empty = conv.split_slide_theme_and_notes("只有正文")
+    assert only == "只有正文"
+    assert empty == ""
+
+
+def test_format_pptx_slides_markdown_pages_notes_and_images():
+    texts = [
+        "主题字\n\n### Notes:\n1. 开场：把合同预审讲给客户听",
+        "第二页主题\n\n### Notes:\n四段结构",
+        "没有备注的页",
+    ]
+    refs = ["assets/slide_001.png", "assets/slide_002.png", "assets/slide_003.png"]
+    md = conv.format_pptx_slides_markdown(texts, refs)
+    assert "## 第一页" in md
+    assert "## 第二页" in md
+    assert "## 第三页" in md
+    assert "### Notes:" not in md
+    assert "## Slide " not in md
+    assert "开场：把合同预审讲给客户听" in md
+    assert "主题字" not in md  # notes win
+    assert "四段结构" in md
+    assert "没有备注的页" in md  # fallback when no notes
+    assert "![第一页](assets/slide_001.png)" in md
+    assert "![第二页](assets/slide_002.png)" in md
+    first = md.split("## 第二页")[0]
+    assert "开场" in first
+    assert "slide_001.png" in first
+    assert "四段结构" not in first

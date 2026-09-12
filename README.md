@@ -7,7 +7,7 @@ Works with Cursor (desktop or CLI), Codex, and other Agent Skills–compatible h
 ## Features
 
 - Local: docx / pptx / xlsx / pdf / html / epub (via [microsoft/markitdown](https://github.com/microsoft/markitdown))
-- **PPTX**: theme text per slide + full-slide screenshots via `office2pdf-python`
+- **PPTX**: speaker notes per 第一页 / 第二页 + full-slide screenshots via `office2pdf-python`
 - **PDF**: text via markitdown + embedded images via PyMuPDF; **scanned/image-only PDFs** auto-detected and OCR'd page-by-page
 - **Images** (png/jpg/…): keep original in `*_assets/` + OCR via [RapidOCR](https://github.com/RapidAI/RapidOCR) (`rapidocr-onnxruntime`; tesseract fallback)
 - Cloud: `kdocs.cn` / `365.kdocs.cn` / `plus.wps.cn` share links; `feishu.cn` / `larksuite.com` wiki, docx, board, base, sheets, mindnotes
@@ -157,7 +157,7 @@ The cloud package is **slim**: `SKILL.md` + `scripts/` only (`references/` stays
 `pack-comate.sh` injects `display_name: 文档转Markdown` into the zipped `SKILL.md` (git source stays validator-clean).
 
 ```bash
-./pack-comate.sh 0.4.24 /path/to/doc2md-0.4.24-comate.zip
+./pack-comate.sh 0.4.25 /path/to/doc2md-0.4.25-comate.zip
 ```
 
 GitHub source still includes `tests/` and `references/` (clone + pytest). Do not pack `tests/`, `README.md`, `CHANGELOG.md`, `references/`, or `agents/` into the Comate zip.

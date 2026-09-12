@@ -509,6 +509,10 @@ def build_pdf_preview_markdown(
             if headings and i - 1 < len(headings):
                 heading = str(headings[i - 1] or "").strip()
             lines.append(f"## {heading or f'画布 {i}'}")
+        elif kind == "presentation":
+            from convert import cn_page_heading
+
+            lines.append(f"## {cn_page_heading(i)}")
         else:
             lines.append(f"## 第 {i} 页")
         lines.append("")

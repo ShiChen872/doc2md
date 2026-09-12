@@ -172,6 +172,7 @@ def test_build_pdf_preview_markdown():
         kind="presentation",
     )
     assert "演示文稿" in deck
+    assert "## 第一页" in deck
     assert "![](deck_assets/page_001.png)" in deck
     assert "![](竞对策略_assets/page_001.png)" in md
     assert "封面文字" in md

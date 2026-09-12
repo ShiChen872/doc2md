@@ -20,7 +20,7 @@ Works with Cursor (desktop or CLI), Codex, and other Agent Skills–compatible h
 - **WPS 流程图 / 思维导图** (`.pom` / `.pof`): screenshot each ProcessOn canvas tab (not 画板/白板)
 - **WPS 白板** (`.kw`, `office_type=b`): screenshot the web canvas (handled before PPT; not Feishu 画板)
 - **Feishu 画板 / 多维表格 / 电子表格 / 思维笔记**: standalone `/board/` `/base/` `/sheets/` `/mindnotes/` screenshot the visible viewer; matching in-doc blocks screenshot instead of an HTML skip
-- **Markdown → HTML** (optional): `--html` writes a sidecar `.html` next to the `.md` (same `*_assets/`). Structured docs become a handbook-style reading page (hero + section cards); screenshot-based slides/sheets/boards stay images. Not a 1:1 layout restore.
+- **Markdown → HTML** (optional): `--html` writes a sidecar `.html` next to the `.md` (same `*_assets/`). Structured docs become a handbook-style reading page; PPT / page decks become per-page talk cards (image above notes). Not a 1:1 layout restore.
 - **Markdown → PDF** (optional): `md_to_pdf.py` prints a local `.md` via Chrome by default (目录 / 页眉 / 页码). Print isolation: JS off, CSP, no `http(s)`. Page/slide screenshots are JPEG-compressed for print (`--no-compress` to keep PNG). `--engine typst --theme brand` is optional branded typesetting (needs Typst). `--engine=wps` is not supported (no silent fallback). WPS Save As PDF is a manual GUI fallback
 - **Feishu**: Playwright session (`feishu_login.py`) + in-page `PageMain` block tree → Markdown + assets; code fences keep language (enum mapped); file attachments and bookmarks from fallback blocks
 - **OTL images**: place by `sourceKey` / `imgID` (not array index); capture CDN and `/attachment/shapes` `raw`, keep the sharper (more pixels). If CDN is incomplete, use shapes by `sourceKey` only
@@ -157,7 +157,7 @@ The cloud package is **slim**: `SKILL.md` + `scripts/` only (`references/` stays
 `pack-comate.sh` injects `display_name: 文档转Markdown` into the zipped `SKILL.md` (git source stays validator-clean).
 
 ```bash
-./pack-comate.sh 0.4.25 /path/to/doc2md-0.4.25-comate.zip
+./pack-comate.sh 0.4.26 /path/to/doc2md-0.4.26-comate.zip
 ```
 
 GitHub source still includes `tests/` and `references/` (clone + pytest). Do not pack `tests/`, `README.md`, `CHANGELOG.md`, `references/`, or `agents/` into the Comate zip.

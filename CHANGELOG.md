@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## v0.4.26
+
+- HTML sidecar: PPT / page-screenshot decks become a talk script (hero + N 页讲稿, one card per 第一页 with image above notes). Handbook pages stay as they are.
+
 ## v0.4.25
 
 - PPTX Markdown is split by 第一页 / 第二页: speaker notes plus that page's screenshot. `### Notes:` headings are dropped so the HTML TOC stays one entry per page.

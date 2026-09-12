@@ -106,6 +106,25 @@ div.toc a { color: inherit; }
 .exam { background: #f6f0fb; border: 1px solid #e4d3f4; border-left: 4px solid #7E1FAD; border-radius: 10px; padding: 12px 18px; margin: 14px 0; }
 .diagram { background: #fff; border: 1px solid var(--line); border-left: 4px solid var(--blue); border-radius: 10px; padding: 12px 18px; margin: 14px 0; font-weight: 600; color: var(--blue); }
 .foot, .sidecar-note { margin-top: 40px; text-align: center; color: var(--gray); font-size: 13px; border-top: 0; }
+.hero.deck { padding: 40px 24px 36px; }
+.wrap.deck { max-width: 880px; }
+.deck-page {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 20px 22px 24px;
+  margin: 28px 0;
+  box-shadow: 0 4px 18px rgba(15,20,35,.05);
+}
+.deck-page h2 {
+  margin: 0 0 14px;
+  padding: 0;
+  border-bottom: 0;
+  font-size: 18px;
+}
+.deck-slide img, .deck-slide img.doc-img { margin: 0 0 8px; }
+.deck-notes { margin-top: 4px; }
+.deck-notes ol, .deck-notes ul { margin-top: 0; }
 @media (max-width: 600px) {
   .hero h1 { font-size: 24px; }
   .wrap { padding: 20px 16px 64px; }
@@ -132,6 +151,9 @@ _META_QUOTE_RE = re.compile(r"^(来源|类型|说明|Note)\s*[:：]", re.IGNOREC
 _TYPE_LINE_RE = re.compile(r"^类型\s*[:：]\s*(.+)$", re.MULTILINE)
 _CHAPTER_RE = re.compile(r"^第[一二三四五六七八九十百零0-9]+章")
 _APPENDIX_RE = re.compile(r"^附录\s*([A-Za-z0-9一二三四五六七八九十])")
+_PAGE_H2_RE = re.compile(
+    r"^第\s*[一二三四五六七八九十百零0-9]+\s*页$|^第\s*\d+\s*页$"
+)
 _CN_COUNT = {1: "一", 2: "二", 3: "三", 4: "四", 5: "五", 6: "六", 7: "七", 8: "八", 9: "九", 10: "十"}
 
 
@@ -175,7 +197,7 @@ def drop_meta_blockquotes(md_text: str) -> str:
             if lines[j].startswith(">"):
                 entries.append(re.sub(r"^>\s?", "", lines[j]).strip())
             j += 1
-        if entries and all((not item) or _META_QUOTE_RE.match(item) for item in entries):
+        if entries and all((not item) or _is_converter_note(item) for item in entries):
             i = j
             while i < len(lines) and not lines[i].strip():
                 i += 1
@@ -185,13 +207,37 @@ def drop_meta_blockquotes(md_text: str) -> str:
     return "".join(out)
 
 
+def _is_converter_note(item: str) -> bool:
+    plain = re.sub(r"[*_`]", "", item or "").strip()
+    if _META_QUOTE_RE.match(plain):
+        return True
+    return "PPTX is exported" in (item or "")
+
+
+def is_page_heading_text(title: str) -> bool:
+    return bool(_PAGE_H2_RE.match((title or "").strip()))
+
+
+def deck_page_count(headings: list[tuple[int, str]]) -> int:
+    return sum(1 for level, title in headings if level == 2 and is_page_heading_text(title))
+
+
+def is_deck_markdown(md_text: str, headings: list[tuple[int, str]]) -> bool:
+    """PPT / screenshot decks: 第一页… or converter note. Not handbook 第一章."""
+    if "PPTX is exported" in (md_text or ""):
+        return True
+    h2 = [title.strip() for level, title in headings if level == 2 and title.strip()]
+    if len(h2) < 2:
+        return False
+    pages = [title for title in h2 if is_page_heading_text(title)]
+    return len(pages) >= 2 and len(pages) * 10 >= len(h2) * 7
+
+
 def lead_quote(md_text: str) -> str:
     """First blockquote that is not converter metadata."""
     for chunk in _blockquote_chunks(md_text):
         first = next((ln.strip() for ln in chunk.splitlines() if ln.strip()), "")
-        if not first or _META_QUOTE_RE.match(first):
-            continue
-        if "PPTX is exported" in chunk:
+        if not first or _is_converter_note(first) or "PPTX is exported" in chunk:
             continue
         text = " ".join(ln.strip() for ln in chunk.splitlines() if ln.strip())
         if text:
@@ -314,8 +360,49 @@ def drop_matching_h1(html: str, title: str) -> str:
     return html
 
 
-def build_hero_html(*, title: str, tag: str, kicker: str, quote: str) -> str:
-    parts = ['<div class="hero">']
+def wrap_deck_pages(html: str) -> str:
+    """Group each 第一页 section into a card: screenshot first, then notes."""
+    blocks = _iter_blocks(html)
+    if not blocks:
+        return html
+    out: list[str] = []
+    i = 0
+    while i < len(blocks):
+        block = blocks[i]
+        if not (
+            re.match(r"<h2\b", block, re.IGNORECASE) and is_page_heading_text(_plain(block))
+        ):
+            out.append(block)
+            i += 1
+            continue
+        heading = block
+        i += 1
+        chunk: list[str] = []
+        while i < len(blocks):
+            nxt = blocks[i]
+            if re.match(r"<h2\b", nxt, re.IGNORECASE) and is_page_heading_text(_plain(nxt)):
+                break
+            chunk.append(nxt)
+            i += 1
+        slides = [item for item in chunk if _has_img(item)]
+        notes = [item for item in chunk if not _has_img(item)]
+        parts = ['<section class="deck-page">', heading]
+        if slides:
+            parts.append('<div class="deck-slide">')
+            parts.extend(slides)
+            parts.append("</div>")
+        if notes:
+            parts.append('<div class="deck-notes">')
+            parts.extend(notes)
+            parts.append("</div>")
+        parts.append("</section>")
+        out.append("\n".join(parts))
+    return "\n".join(out)
+
+
+def build_hero_html(*, title: str, tag: str, kicker: str, quote: str, variant: str = "") -> str:
+    cls = "hero deck" if variant == "deck" else "hero"
+    parts = [f'<div class="{cls}">']
     if tag:
         parts.append(f'<div class="tag">{html_lib.escape(tag)}</div>')
     parts.append(f"<h1>{html_lib.escape(title or 'document')}</h1>")
@@ -334,20 +421,34 @@ def build_sidecar_html(md_text: str, *, fallback_title: str = "document") -> str
     title = mtp.document_title(text, fallback_title)
     headings = mtp.iter_headings(text)
     preview = mtp.is_pdf_preview_markdown(text)
+    deck = is_deck_markdown(text, headings)
+    pages = deck_page_count(headings)
     page_md = drop_meta_blockquotes(text)
-    if not preview:
+    if not preview and not deck:
         page_md = mtp.inject_toc_marker(page_md)
     body = mtp.markdown_to_body_html(page_md)
     body = enhance_images(body)
     body = drop_matching_h1(body, title)
-    body = decorate_callouts(body)
+    if deck:
+        body = wrap_deck_pages(body)
+        hero = build_hero_html(
+            title=title or "document",
+            tag=type_label(md_text) or "演示文稿",
+            kicker=f"{pages} 页讲稿" if pages else "",
+            quote="",
+            variant="deck",
+        )
+        wrap_cls = "wrap deck"
+    else:
+        body = decorate_callouts(body)
+        hero = build_hero_html(
+            title=title or "document",
+            tag=type_label(md_text),
+            kicker="" if preview else hero_kicker(headings),
+            quote=lead_quote(md_text),
+        )
+        wrap_cls = "wrap"
     safe_title = html_lib.escape(title or "document")
-    hero = build_hero_html(
-        title=title or "document",
-        tag=type_label(md_text),
-        kicker="" if preview else hero_kicker(headings),
-        quote=lead_quote(md_text),
-    )
     note = (
         '<p class="foot sidecar-note">由 doc2md 从同一份 Markdown 生成的阅读页 · '
         "图与正文共用旁边的资源目录</p>"
@@ -360,7 +461,7 @@ def build_sidecar_html(md_text: str, *, fallback_title: str = "document") -> str
         f"<style>{SCREEN_CSS}</style>\n"
         "</head>\n<body>\n"
         f"{hero}\n"
-        f'<div class="wrap">\n{body}\n{note}\n</div>\n'
+        f'<div class="{wrap_cls}">\n{body}\n{note}\n</div>\n'
         "</body>\n</html>\n"
     )
 

@@ -45,6 +45,8 @@ def test_build_sidecar_html_keeps_relative_images_and_toc():
     assert "来源: https://365.kdocs.cn" not in html
     assert html.count("<h1>") == 1
     assert "doc-img" in html
+    assert 'class="deck-page"' not in html
+    assert "演示文稿" not in html
 
 
 def test_build_sidecar_html_skips_toc_for_preview_screenshots():
@@ -59,7 +61,9 @@ def test_build_sidecar_html_skips_toc_for_preview_screenshots():
     html = mth.build_sidecar_html(md)
     assert '<div class="toc">' not in html
     assert 'src="page_001.png"' in html
-    assert 'class="hero"' in html
+    assert 'class="hero deck"' in html
+    assert "deck-page" in html
+    assert "2 页讲稿" in html
 
 
 def test_write_sidecar_html(tmp_path: Path):
@@ -113,3 +117,45 @@ def test_lead_quote_skips_converter_metadata():
     )
     assert mth.lead_quote(md) == "客户说AI，你听得懂；客户问原理，你讲得清。"
     assert mth.type_label(md) == "WPS 智能文档"
+
+
+def test_is_deck_markdown_pages_not_chapters():
+    assert mth.is_page_heading_text("第一页")
+    assert mth.is_page_heading_text("第 2 页")
+    assert not mth.is_page_heading_text("第一章｜任务")
+    assert mth.is_deck_markdown(
+        "> **Note:** PPTX is exported as per-page speaker notes\n",
+        [(2, "第一页")],
+    )
+    assert mth.is_deck_markdown(
+        "# 课\n\n## 第一页\n\na\n\n## 第二页\n\nb\n",
+        [(1, "课"), (2, "第一页"), (2, "第二页")],
+    )
+    assert not mth.is_deck_markdown(
+        "# 手册\n\n## 怎么用这本手册\n\n## 第一章｜任务\n",
+        [(1, "手册"), (2, "怎么用这本手册"), (2, "第一章｜任务")],
+    )
+
+
+def test_deck_html_cards_put_image_above_notes():
+    md = (
+        "> **Note:** PPTX is exported as per-page speaker notes + full-slide screenshots "
+        "(via office2pdf; not individual icons).\n\n"
+        "## 第一页\n\n"
+        "1. 开场：把合同预审讲给客户听\n\n"
+        "![第一页](deck_assets/slide_001.png)\n\n"
+        "## 第二页\n\n"
+        "四段结构\n\n"
+        "![第二页](deck_assets/slide_002.png)\n"
+    )
+    html = mth.build_sidecar_html(md, fallback_title="合同预审场景解析_Comate9月必修课")
+    assert "PPTX is exported" not in html
+    assert '<div class="toc">' not in html
+    assert html.count('class="deck-page"') == 2
+    assert "2 页讲稿" in html
+    assert "演示文稿" in html
+    assert 'src="deck_assets/slide_001.png"' in html
+    assert "data:image/" not in html
+    first = html.split("第二页")[0]
+    assert first.index("slide_001.png") < first.index("开场")
+    assert "deck-notes" in html

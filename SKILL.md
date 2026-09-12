@@ -31,7 +31,7 @@ Replace `<this-skill>` with this skill directory (e.g. `~/.agents/skills/doc2md`
 1. Run the unified CLI `doc2md.py`. It classifies a local path vs a WPS vs Feishu URL.
 2. A missing or expired WPS/Feishu session opens Chrome so the user can log in. CI may pass `--no-login`.
 3. After conversion, report image counts and confirm `*_assets/` beside the `.md`.
-4. If the user asks for HTML / 网页预览稿, also pass `--html` (handbook-style sidecar `.html`, same assets). Keep the `.md`.
+4. If the user asks for HTML / 网页预览稿, also pass `--html` (handbook-style sidecar `.html`, same assets; PPT / page decks become per-page talk cards). Keep the `.md`.
 5. PDF: only if the user asks, run `md_to_pdf.py`. Chrome is default; for 品牌样式 / Typst add `--engine typst --theme brand`.
 
 ## Type notes

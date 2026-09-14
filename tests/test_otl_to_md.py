@@ -45,6 +45,54 @@ def test_heading_levels():
     assert "### 三级" in md
 
 
+def test_ordered_headings_restart_under_new_h1():
+    h = lambda level, lid, text: {
+        "type": "heading",
+        "attrs": {"level": level, "listType": "ordered", "listId": lid},
+        "content": [_text_node(text)],
+    }
+    raw = _doc(
+        h(1, "h1", "落地方法论"),
+        h(2, "h2", "怎么找到的这个场景"),
+        h(2, "h2", "需要哪些人来做"),
+        h(1, "h1", "下一章"),
+        h(2, "h2", "第一节"),
+    )
+    md = otl.otl_to_markdown(raw)
+    assert "# 1. 落地方法论" in md
+    assert "## 1. 怎么找到的这个场景" in md
+    assert "## 2. 需要哪些人来做" in md
+    assert "# 2. 下一章" in md
+    assert "## 1. 第一节" in md
+
+
+def test_blockquote_hard_breaks_become_lines():
+    raw = _doc(
+        {
+            "type": "blockquote",
+            "content": [
+                {"type": "text", "text": "①先"},
+                {"type": "text", "text": "找到客户侧"},
+                {
+                    "type": "text",
+                    "text": "有明确「AI提效指标」的部门",
+                    "marks": [{"type": "bold"}],
+                },
+                {"type": "hard_break"},
+                {"type": "text", "text": "②了解这个部门的痛点场景"},
+                {"type": "hard_break"},
+                {"type": "text", "text": "③按以下维度判断"},
+            ],
+        }
+    )
+    md = otl.otl_to_markdown(raw)
+    assert "> ①先找到客户侧**有明确「AI提效指标」的部门**" in md
+    assert "> ②了解这个部门的痛点场景" in md
+    assert "> ③按以下维度判断" in md
+    assert "①先找到" in md
+    assert "①先 找到" not in md
+
+
 def test_paragraph_bullet_list():
     raw = _doc(
         _para("第一", list_type="bullet"),
@@ -81,6 +129,71 @@ def test_list_then_paragraph_has_blank_line():
     )
     md = otl.otl_to_markdown(raw)
     assert "- 合格回答\n\n📖 **" in md
+
+
+def _circle(kind: str, *children: dict, extra: dict | None = None) -> dict:
+    attrs: dict = {"type": kind}
+    if extra:
+        attrs.update(extra)
+    return {"type": "circle_object", "attrs": attrs, "content": list(children)}
+
+
+def test_adjacent_bold_runs_merge():
+    raw = _doc(
+        {
+            "type": "paragraph",
+            "content": [
+                {"type": "text", "text": "已同客户签订", "marks": [{"type": "bold"}]},
+                {"type": "text", "text": "保密协议", "marks": [{"type": "bold"}]},
+                {"type": "text", "text": "，请勿外发", "marks": [{"type": "bold"}]},
+            ],
+        }
+    )
+    md = otl.otl_to_markdown(raw)
+    assert md.count("**") == 2
+    assert "**已同客户签订 保密协议，请勿外发**" in md
+
+
+def test_bold_code_badge_does_not_leak_markers():
+    raw = _doc(
+        {
+            "type": "paragraph",
+            "content": [
+                {"type": "text", "text": "50+条", "marks": [{"type": "bold"}]},
+                {
+                    "type": "text",
+                    "text": "支持后续新增",
+                    "marks": [{"type": "bold"}, {"type": "code"}],
+                },
+            ],
+        }
+    )
+    md = otl.otl_to_markdown(raw)
+    assert "`" not in md
+    assert "**50+条 支持后续新增**" in md
+
+
+def test_circle_column_becomes_table():
+    raw = _doc(
+        _circle(
+            "CircleColumn",
+            _circle("CircleColumnItem", _circle("CircleObjectTile", _para("规则覆盖率")), _circle("CircleObjectTile", _para("70%"))),
+            _circle(
+                "CircleColumnItem",
+                _circle("CircleObjectTile", _para("单份制度审核周期")),
+                _circle("CircleObjectTile", _para("3个月→1个月")),
+            ),
+            _circle(
+                "CircleColumnItem",
+                _circle("CircleObjectTile", _para("沉淀审核规则")),
+                _circle("CircleObjectTile", _para("50+条")),
+            ),
+        )
+    )
+    md = otl.otl_to_markdown(raw)
+    assert "| 规则覆盖率 | 单份制度审核周期 | 沉淀审核规则 |" in md
+    assert "| 70% | 3个月→1个月 | 50+条 |" in md
+    assert md.find("规则覆盖率") < md.find("70%")
 
 
 def test_emoji_then_bold_has_space():
@@ -158,6 +271,36 @@ def test_table_escapes_pipes_in_cells():
     )
     md = otl.otl_to_markdown(raw)
     assert r"a\|b" in md
+
+
+def test_table_cell_merges_adjacent_bold():
+    cell = {
+        "type": "outline-table-cell",
+        "content": [
+            {
+                "type": "CellBlock",
+                "content": [
+                    {
+                        "type": "paragraph",
+                        "content": [
+                            {"type": "text", "text": "从这里切入", "marks": [{"type": "bold"}]},
+                            {"type": "text", "text": "，", "marks": [{"type": "bold"}]},
+                            {"type": "text", "text": "缩短轮次", "marks": [{"type": "bold"}]},
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+    raw = _doc(
+        {
+            "type": "outline-table",
+            "content": [{"type": "outline-table-row", "content": [cell]}],
+        }
+    )
+    md = otl.otl_to_markdown(raw)
+    assert "**从这里切入，缩短轮次**" in md
+    assert "**，**" not in md
 
 
 def test_wps_document_card_becomes_link():

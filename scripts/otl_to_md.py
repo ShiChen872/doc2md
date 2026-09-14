@@ -69,8 +69,23 @@ def iter_otl_picture_attrs(raw: dict) -> list[dict]:
     return pics
 
 
+def _is_cjk(ch: str) -> bool:
+    if not ch:
+        return False
+    o = ord(ch)
+    return (
+        0x4E00 <= o <= 0x9FFF
+        or 0x3400 <= o <= 0x4DBF
+        or 0x3000 <= o <= 0x303F
+        or 0xFF00 <= o <= 0xFFEF
+    )
+
+
 def _join_inline_parts(parts: list[str]) -> str:
-    """Keep a space between emoji/plain text and a following markdown marker."""
+    """Keep a space between emoji/latin text and a following markdown marker.
+
+    Do not insert a space after CJK — 客户侧**加粗** should stay one phrase.
+    """
     out = ""
     for part in parts:
         if not part:
@@ -80,29 +95,86 @@ def _join_inline_parts(parts: list[str]) -> str:
             and not out[-1].isspace()
             and not part[0].isspace()
             and part[0] in "*_`["
+            and not _is_cjk(out[-1])
         ):
             out += " "
         out += part
     return out
 
 
+def _text_mark_kinds(marks: object) -> tuple[set[str], str]:
+    kinds: set[str] = set()
+    href = ""
+    for m in marks or []:
+        if not isinstance(m, dict):
+            continue
+        mt = m.get("type")
+        if mt in ("bold", "strong"):
+            kinds.add("bold")
+        elif mt in ("italic", "em"):
+            kinds.add("italic")
+        elif mt == "code":
+            kinds.add("code")
+        elif mt == "link":
+            href = str((m.get("attrs") or {}).get("href") or "")
+            kinds.add("link")
+    return kinds, href
+
+
+def _structural_key(node: dict) -> tuple | None:
+    """Merge key for adjacent text runs. Ignore decorative code when already bold."""
+    if node.get("type") != "text":
+        return None
+    kinds, href = _text_mark_kinds(node.get("marks"))
+    if "bold" in kinds:
+        kinds.discard("code")
+    return (tuple(sorted(kinds)), href)
+
+
+def _merge_inline_nodes(nodes: list[dict]) -> list[dict]:
+    """Join adjacent text runs that share bold/italic/link so we do not emit **a** **b**."""
+    out: list[dict] = []
+    for node in nodes:
+        key = _structural_key(node)
+        prev_key = _structural_key(out[-1]) if out else None
+        if key is not None and out and key == prev_key:
+            left = out[-1].get("text") or ""
+            right = node.get("text") or ""
+            no_space = "，。！？、；：,.!?;:）)】]》（([【《\"'"
+            if (
+                key[0]
+                and left
+                and right
+                and not left[-1].isspace()
+                and not right[0].isspace()
+                and left[-1] not in no_space
+                and right[0] not in no_space
+            ):
+                left = left + " "
+            merged = dict(out[-1])
+            merged["text"] = left + right
+            out[-1] = merged
+            continue
+        out.append(node)
+    return out
+
+
 def render_inline(node: dict) -> str:
     if node.get("type") == "text":
         t = node.get("text") or ""
-        for m in node.get("marks") or []:
-            if not isinstance(m, dict):
-                continue
-            mt = m.get("type")
-            if mt in ("bold", "strong"):
-                t = f"**{t}**"
-            elif mt in ("italic", "em"):
-                t = f"*{t}*"
-            elif mt == "code":
-                t = f"`{t}`"
-            elif mt == "link":
-                href = (m.get("attrs") or {}).get("href") or ""
-                t = f"[{t}]({href})"
+        kinds, href = _text_mark_kinds(node.get("marks"))
+        # Badge-style code+bold is a chip, not inline code — keep bold only.
+        if "code" in kinds and "bold" not in kinds and "italic" not in kinds:
+            t = f"`{t}`"
+        if "italic" in kinds:
+            t = f"*{t}*"
+        if "bold" in kinds:
+            t = f"**{t}**"
+        if href:
+            t = f"[{t}]({href})"
         return t
+    if node.get("type") == "hard_break":
+        return "\n"
     if node.get("type") == "emoji":
         attrs = node.get("attrs") if isinstance(node.get("attrs"), dict) else {}
         return str(attrs.get("emoji") or "")
@@ -110,9 +182,51 @@ def render_inline(node: dict) -> str:
         attrs = node.get("attrs") if isinstance(node.get("attrs"), dict) else {}
         link = wps_document_link_md(attrs)
         return f" {link}" if link else ""
-    return _join_inline_parts(
-        [render_inline(c) for c in (node.get("content") or []) if isinstance(c, dict)]
-    )
+    children = [c for c in (node.get("content") or []) if isinstance(c, dict)]
+    return _join_inline_parts([render_inline(c) for c in _merge_inline_nodes(children)])
+
+
+def circle_attr_type(node: object) -> str:
+    if not isinstance(node, dict):
+        return ""
+    attrs = node.get("attrs") if isinstance(node.get("attrs"), dict) else {}
+    return str(attrs.get("type") or "")
+
+
+def circle_column_table(node: dict) -> list[str]:
+    """WPS 分栏卡片 (CircleColumn) → one Markdown table row, title | value."""
+    items = [
+        c
+        for c in (node.get("content") or [])
+        if isinstance(c, dict) and circle_attr_type(c) == "CircleColumnItem"
+    ]
+    if not items:
+        return []
+    headers: list[str] = []
+    bodies: list[str] = []
+    for item in items:
+        tiles: list[str] = []
+        for child in item.get("content") or []:
+            if circle_attr_type(child) != "CircleObjectTile":
+                continue
+            txt = render_inline(child).strip()
+            if txt:
+                tiles.append(txt.replace("|", "\\|"))
+        if not tiles:
+            headers.append(" ")
+            bodies.append(" ")
+        elif len(tiles) == 1:
+            headers.append(tiles[0])
+            bodies.append(" ")
+        else:
+            headers.append(tiles[0])
+            bodies.append("<br>".join(tiles[1:]))
+    return [
+        "| " + " | ".join(headers) + " |",
+        "| " + " | ".join("---" for _ in headers) + " |",
+        "| " + " | ".join(bodies) + " |",
+        "",
+    ]
 
 
 def _resolve_image_name(
@@ -228,6 +342,14 @@ def _collect_cell_md(
             if t == "text" or t == "emoji":
                 parts.append(render_inline(n))
                 return
+            if t == "paragraph":
+                md = render_inline(n).strip()
+                if md:
+                    parts.append(md)
+                for child in n.get("content") or []:
+                    if isinstance(child, dict) and child.get("type") == "picture":
+                        walk(child)
+                return
             if t == "outline-table":
                 return
             if t == "WPSDocument":
@@ -280,6 +402,7 @@ def otl_to_markdown(
     pic_i = {"n": 0}
     lines: list[str] = []
     list_state = {"kind": "", "n": 0}
+    heading_list_counts: dict[str, int] = {}
 
     def reset_list() -> None:
         list_state["kind"] = ""
@@ -296,17 +419,36 @@ def otl_to_markdown(
         list_state["n"] += 1
         return f"{list_state['n']}. "
 
+    def heading_list_prefix(level: int, attrs: dict) -> str:
+        lt = str(attrs.get("listType") or "")
+        if "ordered" not in lt:
+            return ""
+        lid = str(attrs.get("listId") or f"h{level}")
+        if level <= 1:
+            for key in list(heading_list_counts):
+                if key != lid:
+                    heading_list_counts[key] = 0
+        heading_list_counts[lid] = heading_list_counts.get(lid, 0) + 1
+        return f"{heading_list_counts[lid]}. "
+
     def emit(node: object, depth: int = 0) -> None:
         if not isinstance(node, dict) or depth > 50:
             return
         t = node.get("type") or ""
         attrs = node.get("attrs") if isinstance(node.get("attrs"), dict) else {}
 
+        if t == "circle_object" and circle_attr_type(node) == "CircleColumn":
+            col = circle_column_table(node)
+            if col:
+                reset_list()
+                lines.extend(col)
+                return
         if t in CONTAINER_TYPES:
             for c in node.get("content") or []:
                 emit(c, depth + 1)
             return
 
+        is_heading = t == "heading" or (isinstance(t, str) and t.startswith("heading"))
         lt = str(attrs.get("listType") or "") if t == "paragraph" else ""
         if not lt:
             if list_state["kind"] and lines and lines[-1] != "":
@@ -397,11 +539,12 @@ def otl_to_markdown(
             lines.append("")
             return
 
-        if "heading" in t:
-            m = re.search(r"(\d+)", t)
+        if is_heading or "heading" in t:
+            m = re.search(r"(\d+)", t) if isinstance(t, str) else None
             lvl = int(m.group(1)) if m else int(attrs.get("level") or 2)
             if inline:
-                lines.append(f"{'#' * min(max(lvl, 1), 6)} {inline}")
+                num = heading_list_prefix(lvl, attrs)
+                lines.append(f"{'#' * min(max(lvl, 1), 6)} {num}{inline}")
                 lines.append("")
             return
 

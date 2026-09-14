@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## v0.4.28
+
+- OTL: 3-column WPS cards (CircleColumn) become a Markdown table; adjacent bold runs merge; bold+code chips no longer leak `**` inside backticks.
+- OTL: `hard_break` in blockquotes becomes a new quoted line; numbered outline headings keep `1.` / `2.` and restart under each h1.
+
 ## v0.4.27
 
 - HTML sidecar: 📖 diagram lines that Markdown folded into a list item become their own card. OTL now ends a list with a blank line so later converts do not fold them.

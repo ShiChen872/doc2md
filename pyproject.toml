@@ -1,6 +1,6 @@
 [project]
 name = "doc2md"
-version = "0.4.27"
+version = "0.4.28"
 description = "Convert local, WPS/kdocs, and Feishu/Lark documents to Markdown."
 readme = "README.md"
 license = { text = "MIT" }

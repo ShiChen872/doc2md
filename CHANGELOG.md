@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## v0.4.29
+
+- Excel / ksheet: extract in-cell `DISPIMG` pictures from `xl/media/` into `*_assets/` and replace the formula in Markdown. Original bytes, not a sheet screenshot.
+
 ## v0.4.28
 
 - OTL: 3-column WPS cards (CircleColumn) become a Markdown table; adjacent bold runs merge; bold+code chips no longer leak `**` inside backticks.

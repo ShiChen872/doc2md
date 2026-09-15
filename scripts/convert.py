@@ -9,6 +9,7 @@ For PDF, markitdown drops images; PyMuPDF extracts them per page and appends
 markdown image links after each page's content.
 For PPTX, each slide becomes speaker notes (or theme text) + one
 full-slide screenshot, headed 第一页 / 第二页 (office2pdf → PDF → PNG).
+For xlsx / ksheet, DISPIMG cell pictures are copied from xl/media.
 """
 
 from __future__ import annotations
@@ -434,6 +435,7 @@ def convert(
     pdf_count = 0
     pptx_count = 0
     image_count = 0
+    xlsx_count = 0
 
     if suffix in IMAGE_SUFFIXES:
         text, image_count = convert_image_file(
@@ -449,6 +451,13 @@ def convert(
         result = md.convert(str(input_path), keep_data_uris=True)
         text = result.text_content or ""
         text, uri_count = extract_data_uris(text, assets_dir, rel_prefix)
+
+        from xlsx_images import inject_xlsx_cell_images, is_xlsx_like
+
+        if is_xlsx_like(input_path):
+            text, xlsx_count = inject_xlsx_cell_images(
+                input_path, text, assets_dir, rel_prefix
+            )
 
         if suffix == ".pdf":
             page_texts = analyze_pdf_pages(input_path)
@@ -487,7 +496,8 @@ def convert(
         "images_from_pdf": pdf_count,
         "images_from_pptx": pptx_count,
         "images_from_image_file": image_count,
-        "images_total": uri_count + pdf_count + pptx_count + image_count,
+        "images_from_xlsx": xlsx_count,
+        "images_total": uri_count + pdf_count + pptx_count + image_count + xlsx_count,
         "markdown_chars": len(text),
     }
     return stats

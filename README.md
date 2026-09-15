@@ -15,7 +15,7 @@ Works with Cursor (desktop or CLI), Codex, and other Agent Skills–compatible h
 - **WPS media** (`.mp4` / `view/media/l/`): Markdown card + cover; optional local `preview.mp4` via ffmpeg HLS remux when original download is denied
 - **WPS PDF shares**: if original download is denied, screenshot web-viewer pages (`page_NNN.png`) + OCR
 - **WPS presentations**: if `.pptx` download is denied, screenshot each web-viewer slide; `wiki/l/` knowledge links resolve to the file share
-- **WPS ksheet / Excel**: download as xlsx-compatible zip → Markdown tables; if download is denied, screenshot each web-viewer sheet tab
+- **WPS ksheet / Excel**: download as xlsx-compatible zip → Markdown tables; in-cell `DISPIMG` pictures are copied from `xl/media/`; if download is denied, screenshot each web-viewer sheet tab
 - **WPS dbsheet** (`.dbt`): if download is denied, screenshot each web-viewer sheet/dashboard
 - **WPS 流程图 / 思维导图** (`.pom` / `.pof`): screenshot each ProcessOn canvas tab (not 画板/白板)
 - **WPS 白板** (`.kw`, `office_type=b`): screenshot the web canvas (handled before PPT; not Feishu 画板)
@@ -157,7 +157,7 @@ The cloud package is **slim**: `SKILL.md` + `scripts/` only (`references/` stays
 `pack-comate.sh` injects `display_name: 文档转Markdown` into the zipped `SKILL.md` (git source stays validator-clean).
 
 ```bash
-./pack-comate.sh 0.4.28 /path/to/doc2md-0.4.28-comate.zip
+./pack-comate.sh 0.4.29 /path/to/doc2md-0.4.29-comate.zip
 ```
 
 GitHub source still includes `tests/` and `references/` (clone + pytest). Do not pack `tests/`, `README.md`, `CHANGELOG.md`, `references/`, or `agents/` into the Comate zip.

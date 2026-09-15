@@ -17,6 +17,7 @@ Also accepts `.otl.json` (WPS intelligent-doc JSON) via `otl_to_md.py`.
 - **Images** (png/jpg/…): keep the original in `*_assets/`. OCR prefers **RapidOCR** (`rapidocr-onnxruntime`; better Chinese), then local `tesseract` (`chi_sim`). Architecture diagrams stay image-first; OCR is search aid.
 - **PDF:** markitdown extracts text; PyMuPDF extracts embedded images. Pages with almost no text are rendered to PNG and OCR'd. A fully scanned PDF uses OCR as the body.
 - **DOCX / EPUB / HTML:** markitdown `keep_data_uris=True` on `convert()`, then decode data URIs into `<stem>_assets/`.
+- **Excel / ksheet:** markitdown emits tables. Cell-embedded pictures (`DISPIMG` / `xl/cellimages.xml`) are saved from `xl/media/` as `image_xlsx_NNN.*` and spliced into the Markdown. Floating drawing pictures that are not DISPIMG are not mapped to a cell.
 - **PPTX:** each page is **第一页 / 第二页** with speaker notes (or theme text if no notes) + **one full-slide screenshot**. PPTX→PDF via `office2pdf-python` (no system Office); PyMuPDF renders page PNGs.
 
 `--html` on `doc2md.py` writes a sidecar `.html` from the Markdown (same assets). Structured docs become a handbook-style reading page (📖 after a list is lifted into its own card); PPT / page decks become per-page talk cards (screenshot above notes).

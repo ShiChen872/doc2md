@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## v0.4.30
+
+- Excel DISPIMG rewrite also matches markitdown's escaped ids (`ID\_…`), so in-cell screenshots replace the formula instead of only appearing in an appendix.
+
 ## v0.4.29
 
 - Excel / ksheet: extract in-cell `DISPIMG` pictures from `xl/media/` into `*_assets/` and replace the formula in Markdown. Original bytes, not a sheet screenshot.

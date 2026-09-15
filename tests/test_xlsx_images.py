@@ -83,8 +83,20 @@ def test_rewrite_dispimg_replaces_formula_in_table(tmp_path: Path):
     out, n = xi.inject_xlsx_cell_images(xlsx, md, assets, "assets")
     assert n == 1
     assert "DISPIMG" not in out
-    assert "![ ](assets/image_xlsx_001.png)" in out or "![](assets/image_xlsx_001.png)" in out
+    assert "![](assets/image_xlsx_001.png)" in out
     assert (assets / "image_xlsx_001.png").read_bytes().startswith(b"\x89PNG")
+    assert "单元格图片" not in out
+
+
+def test_rewrite_dispimg_handles_escaped_underscores(tmp_path: Path):
+    xlsx = tmp_path / "shot.xlsx"
+    _write_cellimages_zip(xlsx, image_id="ID_7B6C022F1BD84FDBBCBE3D7F08098640")
+    assets = tmp_path / "assets"
+    md = r'| =DISPIMG("ID\_7B6C022F1BD84FDBBCBE3D7F08098640",1) |'
+    out, n = xi.inject_xlsx_cell_images(xlsx, md, assets, "assets")
+    assert n == 1
+    assert "DISPIMG" not in out
+    assert "![](assets/image_xlsx_001.png)" in out
     assert "单元格图片" not in out
 
 

@@ -157,6 +157,11 @@ def save_dispimg_assets(
     return id_to_rel
 
 
+def _norm_dispimg_id(raw: str) -> str:
+    """markitdown may emit ID\\_ABC instead of ID_ABC."""
+    return (raw or "").replace("\\_", "_").replace("\\", "")
+
+
 def rewrite_dispimg_markdown(md: str, id_to_rel: dict[str, str]) -> tuple[str, set[str]]:
     """Replace DISPIMG formulas with Markdown images. Returns (text, used ids)."""
     if not id_to_rel:
@@ -164,7 +169,7 @@ def rewrite_dispimg_markdown(md: str, id_to_rel: dict[str, str]) -> tuple[str, s
     used: set[str] = set()
 
     def repl(match: re.Match[str]) -> str:
-        image_id = match.group("id") or match.group("id2") or ""
+        image_id = _norm_dispimg_id(match.group("id") or match.group("id2") or "")
         rel = id_to_rel.get(image_id)
         if not rel:
             return match.group(0)

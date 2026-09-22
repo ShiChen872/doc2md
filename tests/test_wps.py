@@ -145,10 +145,22 @@ def test_is_pdf_share():
     assert not wtm.is_pdf_share("notes.otl", office_type="s")
 
 
+def test_is_word_share():
+    assert wtm.is_word_share("方案.docx")
+    assert wtm.is_word_share("方案.wps")
+    assert wtm.is_word_share("x", office_type="w")
+    assert not wtm.is_word_share("deck.pptx")
+    assert not wtm.is_word_share("notes.otl", office_type="o")
+    assert "canvas-unit" in wtm.WORD_PAGE_SEL
+    assert wtm._word_fp_near_dup(bytes([10] * 80), bytes([12] * 80))
+    assert not wtm._word_fp_near_dup(bytes([10] * 80), bytes([200] * 80))
+
+
 def test_parse_pdf_page_label():
     assert wtm.parse_pdf_page_label("3/24") == (3, 24)
     assert wtm.parse_pdf_page_label(" 3 / 24 ") == (3, 24)
     assert wtm.parse_pdf_page_label("1\n/\n8") == (1, 8)
+    assert wtm.parse_pdf_page_label("页面 : 1/11") == (1, 11)
     assert wtm.parse_pdf_page_label("1") == (None, None)
     assert wtm.parse_pdf_page_label("") == (None, None)
     assert wtm.parse_pdf_page_label("1/9999") == (None, None)
@@ -230,6 +242,16 @@ def test_build_pdf_preview_markdown():
     assert "白板分享" in board
     assert "网页预览分页截图" in board
     assert "## 画布" in board
+    word = wtm.build_pdf_preview_markdown(
+        title="容灾备份方案",
+        source_url="https://365.kdocs.cn/l/cvTthiotuaux",
+        pages=[("方案_assets/page_001.png", "建设目标")],
+        kind="word",
+    )
+    assert "文字分享" in word
+    assert "网页预览分页截图" in word
+    assert "## 第 1 页" in word
+    assert "建设目标" in word
 
 
 def test_build_media_markdown_includes_cover_and_stream():

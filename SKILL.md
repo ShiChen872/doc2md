@@ -39,6 +39,7 @@ Replace `<this-skill>` with this skill directory (e.g. `~/.agents/skills/doc2md`
 Comate install zip is `SKILL.md` + `scripts/` only. Use this list on that host. A local git checkout also has longer notes under `references/`.
 
 - **PPT / 演示**: original download is often denied; then screenshot each slide. A knowledge-wiki `/wiki/l/` URL resolves to the inner file share.
+- **Word / 文字**: download becomes Markdown when allowed. If the share forbids download, restore headings / tables / lists from the Writer document model. Architecture / 图N pictures use the in-page original PNG when the viewer embeds it; otherwise the page is zoomed to 200% and only the figure is cropped. Full-page screenshots are only the fallback if that model is missing.
 - **Excel / ksheet**: download becomes Markdown tables when allowed. In-cell pictures (`DISPIMG`) are copied from `xl/media/` into `*_assets/` (original bytes, not a screenshot). If download is denied, screenshot each bottom sheet tab instead (visible grid, lower resolution).
 - **`.dbt` 多维表**: cannot download; screenshot each left-rail view (grid / form / dashboard).
 - **流程图 / 思维导图** (`.pom` / `.pof`): ProcessOn canvas tabs. Skip Office unzip.

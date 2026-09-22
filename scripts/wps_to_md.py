@@ -14,12 +14,15 @@ Flow:
   3. Try binary download (Office files)
   4. If blocked PDF: screenshot web-viewer `.pdf-page` tiles + OCR → Markdown
   5. If blocked presentation (`.pptx` / office_type=p): screenshot each slide
-  6. If blocked / `.otl` intelligent doc: capture open/otl JSON + CDN / shapes raw images → Markdown
-  7. If `.dbt` / office_type=d (download notAllowType): screenshot each web-viewer sheet
-  8. If blocked spreadsheet (`.xlsx` / `.ksheet` / office_type=s|k): screenshot each ET sheet tab
-  9. If `.pof` / `.pom` / `.pos` (WPS 思维导图 / 流程图, ProcessOn iframe): screenshot each canvas
-  10. If `.kw` / office_type=b (WPS 白板): screenshot the web canvas (must run before PPT; shares `.slide-uil-view`)
-  11. Otherwise run convert.py on the downloaded Office file (`.ksheet` is xlsx-compatible)
+  6. If blocked Word / writer (`.docx` / office_type=w): restore styles from the
+     in-page document model (headings / tables / lists). Screenshot pages only
+     if the model is missing.
+  7. If blocked / `.otl` intelligent doc: capture open/otl JSON + CDN / shapes raw images → Markdown
+  8. If `.dbt` / office_type=d (download notAllowType): screenshot each web-viewer sheet
+  9. If blocked spreadsheet (`.xlsx` / `.ksheet` / office_type=s|k): screenshot each ET sheet tab
+  10. If `.pof` / `.pom` / `.pos` (WPS 思维导图 / 流程图, ProcessOn iframe): screenshot each canvas
+  11. If `.kw` / office_type=b (WPS 白板): screenshot the web canvas (must run before PPT; shares `.slide-uil-view`)
+  12. Otherwise run convert.py on the downloaded Office file (`.ksheet` is xlsx-compatible)
 """
 
 from __future__ import annotations
@@ -66,6 +69,9 @@ PDF_PAGE_SEL = ".pdf-page"
 PDF_PAGE_INPUT_SEL = "input.kd-input-inner-align-center"
 PDF_PAGE_LABEL_RE = re.compile(r"(\d+)\s*/\s*(\d+)")
 MAX_PDF_PREVIEW_PAGES = 200
+WORD_EXTS = {".doc", ".docx", ".docm", ".dot", ".dotx", ".wps", ".wpt"}
+WORD_PAGE_SEL = ".canvas-unit:not(.doc-pending-canvas-unit)"
+MAX_WORD_PREVIEW_PAGES = 200
 WPP_SLIDE_SEL = ".slide-uil-view"
 PPT_EXTS = {".ppt", ".pptx", ".pptm", ".pps", ".ppsx"}
 MAX_WPP_PREVIEW_PAGES = 200
@@ -248,6 +254,13 @@ def is_pdf_share(fname: str = "", office_type: str = "", ftype: str = "") -> boo
     if ot in {"f", "pdf"} or ft in {"f", "pdf"}:
         return True
     return False
+
+
+def is_word_share(fname: str = "", office_type: str = "") -> bool:
+    """WPS Writer / Word. Download path when allowed; web-viewer pages when denied."""
+    if Path(fname or "").suffix.lower() in WORD_EXTS:
+        return True
+    return str(office_type or "").lower() in {"w", "writer", "word"}
 
 
 def parse_pdf_page_label(text: str) -> tuple[int | None, int | None]:
@@ -484,6 +497,8 @@ def build_pdf_preview_markdown(
         type_line = "> 类型: WPS 流程图/思维导图分享（网页预览分页截图；按画布截图）"
     elif kind == "whiteboard":
         type_line = "> 类型: WPS 白板分享（网页预览分页截图；可见画布）"
+    elif kind == "word":
+        type_line = "> 类型: WPS 文字分享（网页预览分页截图 + OCR；分享禁止原文件下载）"
     else:
         type_line = "> 类型: WPS PDF 分享（网页预览分页截图 + OCR）"
     lines = [
@@ -1136,6 +1151,282 @@ def capture_wpp_preview_pages(page, assets_dir: Path) -> list[Path]:
             if total:
                 limit = total
     return saved
+
+
+def read_word_viewer_label(page) -> str:
+    """Read the Writer status-bar label, e.g. '页面 : 1/11'."""
+    try:
+        text = page.evaluate(
+            """() => {
+              const body = (document.body && document.body.innerText) || '';
+              const m = body.match(/页面\\s*[:：]\\s*(\\d+)\\s*\\/\\s*(\\d+)/);
+              return m ? (m[1] + '/' + m[2]) : '';
+            }"""
+        )
+    except Exception:
+        return ""
+    return str(text or "")
+
+
+def read_word_page_total(page) -> int | None:
+    """Prefer the Writer page-count input; fall back to '页面 : n/N'."""
+    try:
+        info = page.evaluate(
+            """() => {
+              const inputs = [...document.querySelectorAll(
+                '.wo-component-input-number-wrap input'
+              )].map(i => parseInt(i.value, 10)).filter(n => n > 0 && n < 1000);
+              const body = (document.body && document.body.innerText) || '';
+              const m = body.match(/页面\\s*[:：]\\s*(\\d+)\\s*\\/\\s*(\\d+)/);
+              return {inputs, total: m ? +m[2] : null};
+            }"""
+        )
+    except Exception:
+        info = None
+    if not isinstance(info, dict):
+        _, total = parse_pdf_page_label(read_word_viewer_label(page))
+        return total
+    totals = [int(n) for n in (info.get("inputs") or []) if isinstance(n, (int, float))]
+    label_total = info.get("total")
+    if isinstance(label_total, (int, float)) and int(label_total) > 0:
+        totals.append(int(label_total))
+    if not totals:
+        return None
+    n = max(totals)
+    if 1 <= n <= MAX_WORD_PREVIEW_PAGES:
+        return n
+    return None
+
+
+def _word_workspace_scroll(page, top: float) -> None:
+    try:
+        page.evaluate(
+            """(y) => {
+              const ws = document.querySelector('#workspace');
+              if (ws) ws.scrollTop = y;
+            }""",
+            float(top),
+        )
+    except Exception:
+        pass
+
+
+def _word_workspace_state(page) -> dict:
+    try:
+        info = page.evaluate(
+            """() => {
+              const ws = document.querySelector('#workspace');
+              const body = (document.body && document.body.innerText) || '';
+              const m = body.match(/页面\\s*[:：]\\s*(\\d+)\\s*\\/\\s*(\\d+)/);
+              return {
+                top: ws ? ws.scrollTop : 0,
+                height: ws ? ws.scrollHeight : 0,
+                client: ws ? ws.clientHeight : 0,
+                cur: m ? +m[1] : null,
+                total: m ? +m[2] : null,
+              };
+            }"""
+        )
+    except Exception:
+        return {}
+    return info if isinstance(info, dict) else {}
+
+
+def _close_word_outline(page) -> None:
+    """Hide the left 大纲 drawer so the page canvas is unobstructed."""
+    try:
+        page.evaluate(
+            """() => {
+              const wrap = document.querySelector('.wps-wrap.show-doc-map');
+              if (!wrap) return false;
+              const nodes = [
+                ...document.querySelectorAll('button, [role="button"], .kd-icon-close'),
+              ];
+              for (const el of nodes) {
+                const label = (
+                  (el.getAttribute('aria-label') || '')
+                  + (el.getAttribute('title') || '')
+                  + (el.innerText || '')
+                ).replace(/\\s+/g, '');
+                if (label === '大纲' || label === '关闭' || label.includes('关闭大纲')) {
+                  el.click();
+                  return true;
+                }
+              }
+              return false;
+            }"""
+        )
+        page.wait_for_timeout(400)
+    except Exception:
+        pass
+
+
+def _screenshot_word_page(page, dest: Path) -> bool:
+    """Screenshot the Writer paper closest to the viewport center."""
+    try:
+        idx = page.evaluate(
+            """() => {
+              const pages = [...document.querySelectorAll(
+                '.canvas-unit:not(.doc-pending-canvas-unit)'
+              )];
+              if (!pages.length) return -1;
+              const mid = window.innerHeight / 2;
+              let best = 0, bestDist = 1e9;
+              pages.forEach((el, i) => {
+                const r = el.getBoundingClientRect();
+                if (r.width < 200 || r.height < 200) return;
+                const c = r.top + r.height / 2;
+                const d = Math.abs(c - mid);
+                if (d < bestDist) { bestDist = d; best = i; }
+              });
+              pages[best]?.scrollIntoView({block: 'center'});
+              return best;
+            }"""
+        )
+    except Exception:
+        idx = 0
+    page.wait_for_timeout(350)
+    loc = page.locator(WORD_PAGE_SEL)
+    try:
+        n = loc.count()
+    except Exception:
+        n = 0
+    if n == 0:
+        return False
+    target = loc.nth(idx if isinstance(idx, int) and 0 <= idx < n else 0)
+    try:
+        target.wait_for(state="visible", timeout=8000)
+        target.screenshot(path=str(dest))
+    except Exception:
+        return False
+    return dest.is_file() and dest.stat().st_size > 500
+
+
+def _preload_word_pages(page) -> None:
+    """Scroll the writer workspace once so lazy page tiles finish laying out."""
+    last_h = 0
+    stable = 0
+    for _ in range(40):
+        st = _word_workspace_state(page)
+        top = float(st.get("top") or 0)
+        height = float(st.get("height") or 0)
+        client = float(st.get("client") or 800)
+        if height and abs(height - last_h) < 8:
+            stable += 1
+        else:
+            stable = 0
+        last_h = height
+        at_end = bool(height) and top + client >= height - 16
+        if at_end and stable >= 2:
+            break
+        _word_workspace_scroll(page, top + max(client * 0.9, 500) if not at_end else height)
+        page.wait_for_timeout(280)
+    _word_workspace_scroll(page, 0)
+    page.wait_for_timeout(500)
+
+
+def _word_page_fingerprint(path: Path) -> bytes:
+    """Low-res crop so watermark / chrome jitter does not create extra pages."""
+    from PIL import Image
+
+    im = Image.open(path).convert("L")
+    w, h = im.size
+    if w < 40 or h < 40:
+        return b""
+    im = im.crop((int(w * 0.08), int(h * 0.08), int(w * 0.92), int(h * 0.88)))
+    im = im.resize((48, 64), Image.Resampling.BILINEAR)
+    return im.tobytes()
+
+
+def _word_fp_near_dup(a: bytes, b: bytes) -> bool:
+    if not a or not b or len(a) != len(b):
+        return False
+    diff = sum(abs(x - y) for x, y in zip(a, b)) / len(a)
+    return diff < 10.0
+
+
+def _word_paper_height(page) -> float:
+    try:
+        h = page.evaluate(
+            """() => {
+              const el = document.querySelector(
+                '.canvas-unit:not(.doc-pending-canvas-unit)'
+              );
+              return el ? el.getBoundingClientRect().height : 0;
+            }"""
+        )
+    except Exception:
+        h = 0
+    if isinstance(h, (int, float)) and h >= 400:
+        return float(h)
+    return 1056.0
+
+
+def capture_word_preview_pages(page, assets_dir: Path) -> list[Path]:
+    """Screenshot each WPS Writer page (download-denied .docx)."""
+    try:
+        page.wait_for_selector(WORD_PAGE_SEL, timeout=25000)
+    except Exception:
+        return []
+    try:
+        page.set_viewport_size({"width": 1600, "height": 1100})
+    except Exception:
+        pass
+    _close_word_outline(page)
+    page.wait_for_timeout(800)
+    try:
+        page.locator(WORD_PAGE_SEL).first.click(timeout=5000)
+    except Exception:
+        pass
+    _preload_word_pages(page)
+
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    sess.clear_generated_assets(assets_dir, patterns=("page_*.png",))
+
+    saved: list[Path] = []
+    seen: set[str] = set()
+    fps: list[bytes] = []
+    step = max(_word_paper_height(page) * 0.9, 600)
+    idle = 0
+    slot = 0
+    for _ in range(MAX_WORD_PREVIEW_PAGES):
+        slot += 1
+        dest = assets_dir / f"page_{slot:03d}.png"
+        if not _screenshot_word_page(page, dest):
+            break
+        digest = hashlib.sha256(dest.read_bytes()).hexdigest()
+        fp = _word_page_fingerprint(dest)
+        near = digest in seen or any(_word_fp_near_dup(fp, prev) for prev in fps[-4:])
+        if near:
+            dest.unlink(missing_ok=True)
+            idle += 1
+        else:
+            seen.add(digest)
+            if fp:
+                fps.append(fp)
+            saved.append(dest)
+            idle = 0
+        st = _word_workspace_state(page)
+        top = float(st.get("top") or 0)
+        height = float(st.get("height") or 0)
+        client = float(st.get("client") or 800)
+        at_end = bool(height) and top + client >= height - 16
+        if at_end and idle >= 2:
+            break
+        if idle >= 5:
+            break
+        _word_workspace_scroll(page, top + step)
+        page.wait_for_timeout(400)
+    # Rename to contiguous page_001… after dropping near-duplicates.
+    final: list[Path] = []
+    for i, src in enumerate(saved, 1):
+        dest = assets_dir / f"page_{i:03d}.png"
+        if src != dest:
+            if dest.exists():
+                dest.unlink()
+            src.rename(dest)
+        final.append(dest)
+    return final
 
 
 def _clean_dbsheet_name(text: str) -> str:
@@ -2038,6 +2329,7 @@ def _share_to_markdown_body(
         is_media = is_media_filename(fname) or "/view/media/" in url.lower()
         is_pdf = is_pdf_share(fname, ftype=ftype)
         is_wpp = is_presentation_share(fname)
+        is_word = is_word_share(fname)
         is_dbt = is_dbsheet_share(fname)
         is_sheet = is_spreadsheet_share(fname)
         is_diagram = is_wps_diagram_share(fname)
@@ -2316,6 +2608,9 @@ def _share_to_markdown_body(
                         ftype=ftype,
                     )
                 is_wpp = is_wpp or is_presentation_share(
+                    fname, office_type=str(env.get("office_type") or "")
+                )
+                is_word = is_word or is_word_share(
                     fname, office_type=str(env.get("office_type") or "")
                 )
                 is_dbt = is_dbt or is_dbsheet_share(
@@ -2599,6 +2894,75 @@ def _share_to_markdown_body(
             raise WpsError(
                 "Could not load the spreadsheet web viewer. "
                 "Re-run wps_login.py, or export the .xlsx from the WPS UI and run convert.py."
+            )
+
+        # Word / writer: download often ErrForbidDownloadLinkFile; screenshot each page.
+        word_ready = False
+        if is_word or page.locator(WORD_PAGE_SEL).count() > 0:
+            try:
+                page.wait_for_selector(WORD_PAGE_SEL, timeout=15000)
+                word_ready = page.locator(WORD_PAGE_SEL).count() > 0
+            except Exception:
+                word_ready = False
+        if word_ready:
+            output_md = titled_output_md(output_md, fname, sid)
+            result["output"] = str(output_md)
+            from wps_word_model import (
+                capture_word_figures,
+                extract_word_model,
+                figure_captions_from_paras,
+                write_word_model_markdown,
+            )
+
+            model = extract_word_model(page)
+            if model:
+                assets_dir = output_md.parent / f"{output_md.stem}_assets"
+                captions = figure_captions_from_paras(list(model.get("paras") or []))
+                figures = (
+                    capture_word_figures(page, assets_dir, captions) if captions else {}
+                )
+                browser.close()
+                stats = write_word_model_markdown(
+                    title=Path(fname).stem or sid,
+                    source_url=url,
+                    output_md=output_md,
+                    model=model,
+                    figures=figures,
+                )
+                result["mode"] = "word-model"
+                result["convert"] = stats
+                result["paragraphs"] = stats.get("paragraphs")
+                result["markdown_chars"] = stats.get("markdown_chars")
+                result["assets_dir"] = stats.get("assets_dir")
+                result["images"] = stats.get("images")
+                return result
+            assets_dir = output_md.parent / f"{output_md.stem}_assets"
+            page_files = capture_word_preview_pages(page, assets_dir)
+            browser.close()
+            if not page_files:
+                raise WpsError(
+                    "Could not capture Word preview pages. "
+                    "Re-run wps_login.py, or export the .docx from the WPS UI and run convert.py."
+                )
+            stats = write_pdf_preview_markdown(
+                title=Path(fname).stem or sid,
+                source_url=url,
+                output_md=output_md,
+                page_files=page_files,
+                kind="word",
+            )
+            result["mode"] = "word-preview"
+            result["convert"] = stats
+            result["pages"] = stats.get("pages")
+            result["assets_dir"] = stats.get("assets_dir")
+            result["markdown_chars"] = stats.get("markdown_chars")
+            return result
+
+        if is_word:
+            browser.close()
+            raise WpsError(
+                "Could not load the Word web viewer. "
+                "Re-run wps_login.py, or export the .docx from the WPS UI and run convert.py."
             )
 
         # OTL path: scroll to lazy-load CDN images / shapes.

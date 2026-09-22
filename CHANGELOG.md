@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## v0.4.31
+
+- WPS Word / Writer: when original download is `ErrForbidDownloadLinkFile`, restore headings / tables / lists from the in-page document model. 图N architecture pictures prefer the viewer's embedded PNG bytes; otherwise the page is zoomed to 200% and only the figure is cropped (`fig_NNN.png`), not a full-page OCR shot.
+
 ## v0.4.30
 
 - Excel DISPIMG rewrite also matches markitdown's escaped ids (`ID\_…`), so in-cell screenshots replace the formula instead of only appearing in an appendix.

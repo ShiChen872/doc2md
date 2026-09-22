@@ -23,6 +23,8 @@ Session: `~/.config/doc2md/wps_storage_state.json` (Playwright; directory 0700, 
 
 **Presentations:** `.pptx` link shares often return `ErrForbidDownloadLinkFile`. Screenshot each `.slide-uil-view` slide. Knowledge-wiki URLs (`365.kdocs.cn/wiki/l/0l…`) resolve to the inner file share id. Do not use WPS `file-content` reading-mode markdown for decks — that is text-only.
 
+**Word / Writer:** `.docx` (`office_type=w`) downloads as Office zip → Markdown when the share allows it. If download is `ErrForbidDownloadLinkFile`, read the in-page Writer model (`APP.data.doc` text stream + 标题/正文/目录 styles) and emit structured Markdown. 图N pictures are the SVG `image` sitting above the caption. Prefer the embedded `data:image/...` bytes (often sharper than the on-screen tile); if that is missing, zoom Writer to 200% and screenshot the figure only, into `*_assets/fig_NNN.png`. Full-page `.canvas-unit` shots are only the fallback if the model is missing. Do not fall through to the OTL `open/otl` path.
+
 **ksheet / Excel / dbsheet:** `.ksheet` (`office_type=k`) and `.xlsx` (`office_type=s`) download as xlsx-compatible zip → Markdown tables when the share allows it. In-cell screenshots (`DISPIMG`) come from `xl/media/` at original size. If download is `ErrForbidDownloadLinkFile`, screenshot each bottom sheet tab (`.et-status-sheet-item`), clipping `.et-grid-view-wrap` (visible grid, not original pixels). `.dbt` (`office_type=d`) cannot be downloaded (`notAllowType`); screenshot each left-rail sheet and nested view (grid / form / dashboard).
 
 **流程图 / 思维导图:** `.pom` / `.pof` open in a ProcessOn iframe (`#dotviewIframe`). Skip original download (not an Office zip). Screenshot each bottom **画布** tab. Visible canvas, not a vector dump.

@@ -196,6 +196,39 @@ def test_circle_column_becomes_table():
     assert md.find("规则覆盖率") < md.find("70%")
 
 
+def test_circle_column_keeps_pictures():
+    raw = _doc(
+        _circle(
+            "CircleColumn",
+            _circle(
+                "CircleColumnItem",
+                _circle("CircleObjectTile", _para("PMS系统-解决方案模块")),
+                _circle(
+                    "CircleObjectTile",
+                    {"type": "picture", "attrs": {"sourceKey": "AAA", "imgID": "1"}},
+                ),
+            ),
+            _circle(
+                "CircleColumnItem",
+                _circle("CircleObjectTile", _para("PMS系统-解决方案必上传模板")),
+                _circle(
+                    "CircleObjectTile",
+                    {"type": "picture", "attrs": {"sourceKey": "BBB", "imgID": "2"}},
+                ),
+            ),
+        )
+    )
+    md = otl.otl_to_markdown(
+        raw,
+        image_map={"AAA": "image_001.png", "BBB": "image_002.png"},
+        assets_rel="assets",
+    )
+    assert "| PMS系统-解决方案模块 | PMS系统-解决方案必上传模板 |" in md
+    assert "![image 1](assets/image_001.png)" in md
+    assert "![image 2](assets/image_002.png)" in md
+    assert md.find("PMS系统-解决方案模块") < md.find("image_001.png")
+
+
 def test_emoji_then_bold_has_space():
     raw = _doc(
         {

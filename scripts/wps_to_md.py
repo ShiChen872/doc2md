@@ -544,14 +544,50 @@ def normalize_url(url: str) -> str:
     return check_wps_host(url)
 
 
+# Path.stem would turn "方案-V1.0-20260922.otl" into "方案-V1".
+_STEM_EXTS = (
+    ".otl.json",
+    ".docx",
+    ".docm",
+    ".dotx",
+    ".pptx",
+    ".pptm",
+    ".ppsx",
+    ".xlsx",
+    ".xlsm",
+    ".ksheet",
+    ".otl",
+    ".doc",
+    ".dot",
+    ".ppt",
+    ".pps",
+    ".xls",
+    ".dbt",
+    ".pdf",
+    ".wps",
+    ".wpt",
+    ".kw",
+    ".pom",
+    ".pof",
+    ".pos",
+    ".md",
+    ".json",
+)
+
+
 def safe_stem(name: str) -> str:
-    base = Path(name).stem or name
-    return SAFE_NAME_RE.sub("_", base).strip("._") or "wps_document"
+    raw = str(name or "").replace("\\", "/").rsplit("/", 1)[-1]
+    lower = raw.lower()
+    for ext in _STEM_EXTS:
+        if lower.endswith(ext):
+            raw = raw[: -len(ext)]
+            break
+    return SAFE_NAME_RE.sub("_", raw).strip("._") or "wps_document"
 
 
 def titled_output_md(output_md: Path, fname: str | None, sid: str) -> Path:
     """If the caller used a placeholder name, adopt the share's document stem."""
-    stem = safe_stem(Path(fname).stem if fname else sid)
+    stem = safe_stem(fname or sid)
     if output_md.name in {"out.md", "output.md"} or output_md.stem == "wps_out":
         return output_md.with_name(f"{stem}.md")
     return output_md
@@ -2107,7 +2143,7 @@ def expand_nested_otl_documents(
                 )
             continue
 
-        stem = safe_stem(Path(name).stem if name else child_sid)
+        stem = safe_stem(name or child_sid)
         if stem in used_stems or (nested_dir / f"{stem}.md").exists():
             stem = f"{stem}_{child_sid[:8]}"
         used_stems.add(stem)
@@ -2981,7 +3017,7 @@ def _share_to_markdown_body(
                 "Export manually from WPS UI and run convert.py."
             )
 
-        stem = safe_stem(Path(fname).stem if fname else sid)
+        stem = safe_stem(fname or sid)
         otl_path = work / f"{stem}.otl.json"
         try:
             parsed = json.loads(data.decode("utf-8"))

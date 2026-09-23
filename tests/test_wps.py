@@ -323,6 +323,10 @@ def test_normalize_url_adds_scheme():
 def test_safe_stem_keeps_cjk_and_alnum():
     assert wtm.safe_stem("爱数方案.docx") == "爱数方案"
     assert wtm.safe_stem("file (1).docx") == "file_1"
+    assert wtm.safe_stem("月会-解决方案复制-V1.0-20260922.otl") == (
+        "月会-解决方案复制-V1.0-20260922"
+    )
+    assert wtm.safe_stem("方案-260831-V1.1.docx") == "方案-260831-V1.1"
 
 
 def test_safe_stem_empty_fallback():

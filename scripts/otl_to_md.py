@@ -193,7 +193,54 @@ def circle_attr_type(node: object) -> str:
     return str(attrs.get("type") or "")
 
 
-def circle_column_table(node: dict) -> list[str]:
+def _circle_tile_markdown(
+    tile: dict,
+    *,
+    image_map: dict[str, str],
+    image_names: list[str],
+    pic_i: dict,
+    assets_rel: str,
+) -> str:
+    """Title text plus any pictures inside one CircleObjectTile."""
+    parts: list[str] = []
+    txt = render_inline(tile).strip()
+    if txt:
+        parts.append(txt.replace("|", "\\|"))
+
+    def walk(n: object) -> None:
+        if isinstance(n, dict):
+            if n.get("type") == "picture":
+                pic_i["n"] += 1
+                attrs = n.get("attrs") if isinstance(n.get("attrs"), dict) else {}
+                md = _picture_markdown(
+                    attrs,
+                    image_map=image_map,
+                    image_names=image_names,
+                    emit_index=pic_i["n"] - 1,
+                    assets_rel=assets_rel,
+                    n=pic_i["n"],
+                )
+                if md:
+                    parts.append(md.replace("|", "\\|"))
+                return
+            for c in n.get("content") or []:
+                walk(c)
+        elif isinstance(n, list):
+            for x in n:
+                walk(x)
+
+    walk(tile)
+    return "<br>".join(p for p in parts if p)
+
+
+def circle_column_table(
+    node: dict,
+    *,
+    image_map: dict[str, str] | None = None,
+    image_names: list[str] | None = None,
+    pic_i: dict | None = None,
+    assets_rel: str = "",
+) -> list[str]:
     """WPS 分栏卡片 (CircleColumn) → one Markdown table row, title | value."""
     items = [
         c
@@ -202,6 +249,10 @@ def circle_column_table(node: dict) -> list[str]:
     ]
     if not items:
         return []
+    image_map = dict(image_map or {})
+    image_names = list(image_names or [])
+    if pic_i is None:
+        pic_i = {"n": 0}
     headers: list[str] = []
     bodies: list[str] = []
     for item in items:
@@ -209,9 +260,15 @@ def circle_column_table(node: dict) -> list[str]:
         for child in item.get("content") or []:
             if circle_attr_type(child) != "CircleObjectTile":
                 continue
-            txt = render_inline(child).strip()
-            if txt:
-                tiles.append(txt.replace("|", "\\|"))
+            piece = _circle_tile_markdown(
+                child,
+                image_map=image_map,
+                image_names=image_names,
+                pic_i=pic_i,
+                assets_rel=assets_rel,
+            )
+            if piece:
+                tiles.append(piece)
         if not tiles:
             headers.append(" ")
             bodies.append(" ")
@@ -438,7 +495,13 @@ def otl_to_markdown(
         attrs = node.get("attrs") if isinstance(node.get("attrs"), dict) else {}
 
         if t == "circle_object" and circle_attr_type(node) == "CircleColumn":
-            col = circle_column_table(node)
+            col = circle_column_table(
+                node,
+                image_map=image_map,
+                image_names=image_names,
+                pic_i=pic_i,
+                assets_rel=assets_rel,
+            )
             if col:
                 reset_list()
                 lines.extend(col)

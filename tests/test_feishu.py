@@ -567,6 +567,61 @@ def test_board_and_bitable_blocks_emit_placeholders():
     assert {a["asset_type"] for a in assets} == {"board", "bitable"}
 
 
+def test_poll_and_chat_card_keep_text():
+    model = {
+        "title": "互动",
+        "root": {
+            "type": "page",
+            "children": [
+                {
+                    "id": "p1",
+                    "type": "poll",
+                    "snapshot": {"type": "poll", "title": "下周开会？", "options": ["可以", "不行"]},
+                    "children": [],
+                },
+                {
+                    "id": "c1",
+                    "type": "chat_card",
+                    "snapshot": {"type": "chat_card", "title": "项目群"},
+                    "children": [],
+                },
+                {
+                    "id": "p2",
+                    "type": "poll",
+                    "snapshot": {"type": "poll"},
+                    "children": [],
+                },
+            ],
+        },
+    }
+    md = ftm.blocks_to_markdown(model)
+    assert "**下周开会？**" in md
+    assert "- 可以" in md
+    assert "- 不行" in md
+    assert "**聊天卡片** 项目群" in md
+    assert "skipped feishu block: poll" in md
+
+
+def test_visible_grid_becomes_table():
+    table = ftm.grid_rows_to_markdown(
+        [
+            ["", "名称", "状态"],
+            ["", "网关", "完成"],
+        ]
+    )
+    assert "| 名称 | 状态 |" in table
+    assert "| 网关 | 完成 |" in table
+    md = ftm.build_feishu_preview_markdown(
+        title="表",
+        source_url="https://acme.feishu.cn/sheets/abc",
+        kind="sheet",
+        pages=[("表_assets/page_001.png", "表格")],
+        grid_rows=[["名称", "状态"], ["网关", "完成"]],
+    )
+    assert "## 可见单元格" in md
+    assert "| 网关 | 完成 |" in md
+
+
 def test_sheet_and_mindnote_blocks_emit_placeholders():
     model = {
         "title": "embeds",

@@ -222,9 +222,22 @@ def _flush_table(rows: list[list[str]], lines: list[str]) -> None:
     lines.append("")
 
 
+def _next_captured_caption(
+    paras: list[dict], index: int, figures: dict[str, str]
+) -> bool:
+    """True when the next visible paragraph already has a captured figure."""
+    for nxt in paras[index + 1 :]:
+        cleaned = strip_word_fields(str(nxt.get("text") or ""))
+        if not cleaned:
+            continue
+        return norm_caption(cleaned) in figures
+    return False
+
+
 def paragraphs_to_markdown(
     paras: list[dict],
     figures: dict[str, str] | None = None,
+    loose_images: list[str] | None = None,
 ) -> str:
     lines: list[str] = []
     table_rows: list[list[str]] = []
@@ -248,20 +261,41 @@ def paragraphs_to_markdown(
             table_rows = []
 
     figures = figures or {}
+    loose: list[str] = list(loose_images or [])
 
-    for para in paras:
+    def take_loose(n: int) -> list[str]:
+        got = loose[:n]
+        del loose[: len(got)]
+        return got
+
+    for index, para in enumerate(paras):
         text = str(para.get("text") or "")
         style = str(para.get("style") or "正文")
-        if "\x01" in text and not strip_word_fields(text):
-            continue
+        placeholders = text.count("\x01")
+        picture_only = bool(placeholders) and not strip_word_fields(text)
+        claimed = picture_only and _next_captured_caption(paras, index, figures)
         if para.get("table"):
             if para.get("table_row"):
                 if table_row:
                     table_rows.append(table_row)
                     table_row = []
             else:
-                table_row.append(text)
+                cell = _esc_cell(text)
+                if placeholders and not claimed:
+                    imgs = " ".join(f"![]({rel})" for rel in take_loose(placeholders))
+                    cell = f"{imgs} {cell}".strip() if cell else imgs
+                table_row.append(cell)
             continue
+        if claimed:
+            continue
+        if placeholders:
+            close_table()
+            for rel in take_loose(placeholders):
+                close_list()
+                lines.append(f"![]({rel})")
+                lines.append("")
+            if picture_only:
+                continue
         close_table()
         cleaned = strip_word_fields(text)
         if not cleaned:
@@ -297,6 +331,9 @@ def paragraphs_to_markdown(
 
     close_table()
     close_list()
+    for rel in loose:
+        lines.append(f"![]({rel})")
+        lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -308,7 +345,7 @@ def build_word_model_markdown(
 ) -> str:
     lines = [
         f"> 来源: {source_url}",
-        "> 类型: WPS 文字分享（按文档样式还原：标题 / 表格 / 列表；插图为原图截图）",
+        "> 类型: WPS 文字分享（按文档样式还原：标题 / 表格 / 列表；「图N」用原图，其余插图按占位插入）",
         "",
         f"# {title}",
         "",
@@ -518,6 +555,148 @@ def capture_word_figures(
     return rels
 
 
+LIST_LOOSE_WORD_IMAGES_JS = r"""() => {
+  const ws = document.querySelector('#workspace');
+  const scroll = ws ? ws.scrollTop : 0;
+  const images = [...document.querySelectorAll('svg image')].filter((el) => {
+    if (el.getAttribute('data-doc2md-fig')) return false;
+    const r = el.getBoundingClientRect();
+    return r.width >= 48 && r.height >= 48;
+  });
+  return images.map((el) => {
+    const r = el.getBoundingClientRect();
+    const href = el.getAttribute('href')
+      || el.getAttributeNS('http://www.w3.org/1999/xlink', 'href')
+      || '';
+    const y = Math.round(scroll + r.top);
+    const x = Math.round(r.left);
+    const id = 'loose_' + y + '_' + x;
+    el.setAttribute('data-doc2md-loose', id);
+    return {id, href, y, x};
+  });
+}"""
+
+
+def _save_picture_bytes(dest: Path, raw: bytes | None, seen_hash: set[str]) -> bool:
+    if not raw or not write_figure_png(dest, raw):
+        dest.unlink(missing_ok=True)
+        return False
+    if not dest.is_file() or dest.stat().st_size < 800:
+        dest.unlink(missing_ok=True)
+        return False
+    digest = hashlib.sha256(dest.read_bytes()).hexdigest()
+    if digest in seen_hash:
+        dest.unlink(missing_ok=True)
+        return False
+    seen_hash.add(digest)
+    return True
+
+
+def _shape_image_bytes(page, url: str) -> bytes | None:
+    raw = image_bytes_from_data_uri(url)
+    if raw:
+        return raw
+    if not str(url).startswith("http"):
+        return None
+    try:
+        resp = page.context.request.get(str(url), timeout=15000)
+        if resp.status != 200:
+            return None
+        body = resp.body()
+    except Exception:
+        return None
+    if body[:8] == b"\x89PNG\r\n\x1a\n" or body[:2] == b"\xff\xd8":
+        return body
+    return None
+
+
+def capture_loose_word_pictures(page, assets_dir: Path, model: dict | None = None) -> list[str]:
+    """Save pictures that are not tied to a 图N caption, in reading order.
+
+    DOM `svg image` tiles come first. shapeMap URLs fill anything the tiles missed.
+    """
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    sess.clear_generated_assets(assets_dir, patterns=("pic_*.png",))
+    set_writer_zoom(page, 200)
+    found: list[tuple[int, int, Path]] = []
+    seen_id: set[str] = set()
+    seen_href: set[str] = set()
+    seen_hash: set[str] = set()
+    _workspace_scroll(page, 0)
+    page.wait_for_timeout(300)
+    _, height = _workspace_height(page)
+    step = 700.0
+    y = 0.0
+    slot = 0
+    guard = 0
+    while y <= max(height, 1) + step and guard < 80:
+        guard += 1
+        _workspace_scroll(page, y)
+        page.wait_for_timeout(250)
+        try:
+            hits = page.evaluate(LIST_LOOSE_WORD_IMAGES_JS)
+        except Exception:
+            hits = []
+        if not isinstance(hits, list):
+            hits = []
+        for hit in hits:
+            if not isinstance(hit, dict):
+                continue
+            mark = str(hit.get("id") or "")
+            href = str(hit.get("href") or "")
+            if not mark or mark in seen_id:
+                continue
+            if href and href in seen_href:
+                seen_id.add(mark)
+                continue
+            loc = page.locator(f'svg image[data-doc2md-loose="{mark}"]').first
+            slot += 1
+            dest = assets_dir / f"_loose_{slot:03d}.png"
+            raw = image_bytes_from_data_uri(href)
+            if not _save_picture_bytes(dest, raw, seen_hash):
+                try:
+                    loc.screenshot(path=str(dest))
+                except Exception:
+                    dest.unlink(missing_ok=True)
+                    slot -= 1
+                    continue
+                if not _save_picture_bytes(dest, dest.read_bytes() if dest.is_file() else None, seen_hash):
+                    slot -= 1
+                    continue
+            seen_id.add(mark)
+            if href:
+                seen_href.add(href)
+            found.append((int(hit.get("y") or 0), int(hit.get("x") or 0), dest))
+        _, height = _workspace_height(page)
+        y += step
+        if height and y > height + step:
+            break
+
+    for item in (model or {}).get("images") or []:
+        if not isinstance(item, dict):
+            continue
+        url = str(item.get("url") or "")
+        if not url or url in seen_href:
+            continue
+        raw = _shape_image_bytes(page, url)
+        slot += 1
+        dest = assets_dir / f"_loose_{slot:03d}.png"
+        if not _save_picture_bytes(dest, raw, seen_hash):
+            slot -= 1
+            continue
+        seen_href.add(url)
+        found.append((10**9, slot, dest))
+
+    found.sort()
+    rels: list[str] = []
+    for i, (_, _, path) in enumerate(found, start=1):
+        dest = assets_dir / f"pic_{i:03d}.png"
+        if path != dest:
+            path.replace(dest)
+        rels.append(f"{assets_dir.name}/{dest.name}")
+    return rels
+
+
 def write_word_model_markdown(
     *,
     title: str,
@@ -525,18 +704,24 @@ def write_word_model_markdown(
     output_md: Path,
     model: dict,
     figures: dict[str, str] | None = None,
+    loose_images: list[str] | None = None,
 ) -> dict:
-    body = paragraphs_to_markdown(list(model.get("paras") or []), figures=figures)
+    body = paragraphs_to_markdown(
+        list(model.get("paras") or []),
+        figures=figures,
+        loose_images=loose_images,
+    )
     md = build_word_model_markdown(title=title, source_url=source_url, body=body)
     output_md.parent.mkdir(parents=True, exist_ok=True)
     output_md.write_text(md, encoding="utf-8")
+    image_count = len(figures or {}) + len(loose_images or [])
     return {
         "paragraphs": len(model.get("paras") or []),
         "text_len": model.get("len"),
-        "images": len(figures or {}),
+        "images": image_count,
         "markdown_chars": len(md),
         "assets_dir": str((output_md.parent / f"{output_md.stem}_assets"))
-        if figures
+        if image_count
         else None,
     }
 

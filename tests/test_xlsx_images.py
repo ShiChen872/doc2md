@@ -111,6 +111,73 @@ def test_unused_dispimg_gets_appendix(tmp_path: Path):
     assert "image_xlsx_001.png" in out
 
 
+def _drawing_zip(path: Path) -> None:
+    png = _png_1x1()
+    drawing = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"
+  xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+  xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <xdr:twoCellAnchor>
+    <xdr:from>
+      <xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff>
+      <xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff>
+    </xdr:from>
+    <xdr:pic>
+      <xdr:nvPicPr><xdr:cNvPr id="2" name="Picture 1"/></xdr:nvPicPr>
+      <xdr:blipFill><a:blip r:embed="rId1"/></xdr:blipFill>
+    </xdr:pic>
+    <xdr:clientData/>
+  </xdr:twoCellAnchor>
+</xdr:wsDr>
+"""
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr(
+            "xl/workbook.xml",
+            """<?xml version="1.0" encoding="UTF-8"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+ xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets>
+</workbook>""",
+        )
+        zf.writestr(
+            "xl/_rels/workbook.xml.rels",
+            """<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+</Relationships>""",
+        )
+        zf.writestr("xl/worksheets/sheet1.xml", "<worksheet/>")
+        zf.writestr(
+            "xl/worksheets/_rels/sheet1.xml.rels",
+            """<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing1.xml"/>
+</Relationships>""",
+        )
+        zf.writestr("xl/drawings/drawing1.xml", drawing)
+        zf.writestr("xl/drawings/_rels/drawing1.xml.rels", _rels_xml(target="../media/image1.png"))
+        zf.writestr("xl/media/image1.png", png)
+
+
+def test_drawing_image_splices_into_cell(tmp_path: Path):
+    xlsx = tmp_path / "float.xlsx"
+    _drawing_zip(xlsx)
+    md = "\n".join(
+        [
+            "## Sheet1",
+            "",
+            "| 名称 | 图 |",
+            "| --- | --- |",
+            "| 架构 |  |",
+            "",
+        ]
+    )
+    out, n = xi.inject_xlsx_drawing_images(xlsx, md, tmp_path / "assets", "assets")
+    assert n == 1
+    assert "| 架构 | ![](assets/image_draw_001.png) |" in out
+    assert (tmp_path / "assets" / "image_draw_001.png").read_bytes().startswith(b"\x89PNG")
+
+
 def test_missing_cellimages_is_noop(tmp_path: Path):
     xlsx = tmp_path / "plain.xlsx"
     with zipfile.ZipFile(xlsx, "w") as zf:

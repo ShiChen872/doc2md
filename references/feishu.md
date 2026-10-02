@@ -24,7 +24,8 @@ Playwright opens the page, waits for `PageMain` blockManager when present, seria
 - Code fences keep language (numeric CodeLanguage mapped).
 - File attachments download when present; bookmarks from fallback blocks are kept.
 - **Board / bitable / sheet / mindnote:** standalone `/board/`, `/base/` (including `/share/base/` forms), `/sheets/`, and `/mindnotes/` screenshot the visible web viewer. Matching blocks inside a wiki/docx become screenshots instead of an HTML skip comment.
-- Poll / chat cards are skipped with an HTML comment.
+- Poll / chat cards keep a title and options when the snapshot has them. Otherwise they stay an HTML comment.
+- Sheet / bitable previews stay screenshots, and add a 可见单元格 table when the viewer exposes `gridcell` text. That table is the visible rows, not the whole workbook.
 - Legacy `/docs/` URLs often need upgrade to new docx; the CLI still tries `PageMain` if available.
 - Heading and text blocks render children (folded titles / indented paragraphs).
 - Mermaid ISV widgets accept string `snapshot.data`.

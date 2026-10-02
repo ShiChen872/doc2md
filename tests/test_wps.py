@@ -14,6 +14,12 @@ import wps_to_md as wtm  # noqa: E402
 import wps_download as wd  # noqa: E402
 
 
+def test_share_title_falls_back_to_share_id():
+    assert wtm.share_title("方案V1.0.docx", "sid") == "方案V1.0"
+    assert wtm.share_title("", "abc123") == "abc123"
+    assert wtm.share_title(None, "abc123") == "abc123"
+
+
 def test_extract_share_id_kdocs():
     assert wtm.extract_share_id("https://365.kdocs.cn/l/ccPEq4cqQmKT") == "ccPEq4cqQmKT"
     assert wtm.extract_share_id("https://www.kdocs.cn/l/abc123") == "abc123"

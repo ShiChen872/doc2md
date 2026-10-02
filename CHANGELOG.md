@@ -2,7 +2,14 @@
 
 ## Unreleased
 
+## v0.4.33
+
 - WPS preview and media titles fall back to the share id when the filename is empty. Those paths referenced an undefined `stem`, so ruff failed CI before pytest ran.
+- WPS Word: pictures without a 图N caption are inserted at the `\x01` placeholder (DOM image, then shapeMap URL). 图N figures stay on their captions.
+- Excel / ksheet: floating `xl/drawings` pictures are copied into `*_assets/` and spliced into the anchored cell.
+- Local `.ppt` / `.xls` / `.doc` that are actually Office Open XML use the pptx / xlsx / docx path. Real OLE files keep markitdown text and any embedded PNG/JPEG blobs.
+- Feishu polls and chat cards keep their title and options when the snapshot has them. Sheet / bitable previews add a 可见单元格 table when the viewer exposes grid cells.
+- CI uses `actions/checkout@v7`, `actions/setup-python@v7`, and `ubuntu-24.04`. Comate zips are gitignored.
 
 ## v0.4.32
 

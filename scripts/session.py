@@ -14,7 +14,14 @@ DIR_MODE = 0o700
 FILE_MODE = 0o600
 COOKIE_FILES = ("wps_cookie.txt", "feishu_cookie.txt")
 WORK_TOKEN_RE = re.compile(r"[^A-Za-z0-9._-]+")
-GENERATED_ASSET_GLOBS = ("page_*.png", "page_*.jpg", "image_*", "slide_*")
+GENERATED_ASSET_GLOBS = (
+    "page_*.png",
+    "page_*.jpg",
+    "image_*",
+    "slide_*",
+    "fig_*.png",
+    "pic_*.png",
+)
 
 
 def ensure_config_dir(root: Path | None = None) -> Path:

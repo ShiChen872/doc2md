@@ -211,5 +211,199 @@ def inject_xlsx_cell_images(
     return text, len({rel for rel in id_to_rel.values()})
 
 
+def _sheet_drawings(zf: zipfile.ZipFile, names: set[str]) -> list[tuple[str, str]]:
+    """Return (sheet name, drawing zip path) in workbook order."""
+    book_name = next((n for n in names if n.rstrip("/") == "xl/workbook.xml"), "")
+    rels_name = next((n for n in names if n.rstrip("/") == "xl/_rels/workbook.xml.rels"), "")
+    if not book_name or not rels_name:
+        return []
+    rid_to_sheet = _parse_rels(zf.read(rels_name))
+    root = ET.fromstring(zf.read(book_name))
+    out: list[tuple[str, str]] = []
+    for el in root.iter():
+        if _local(el.tag) != "sheet":
+            continue
+        name = _attr(el, "name")
+        rid = _attr(el, "id")
+        target = rid_to_sheet.get(rid) or ""
+        if not name or not target:
+            continue
+        sheet_path = posixpath.normpath(posixpath.join("xl", target.lstrip("/")))
+        sheet_rels = posixpath.normpath(
+            posixpath.join(posixpath.dirname(sheet_path), "_rels", posixpath.basename(sheet_path) + ".rels")
+        )
+        if sheet_rels not in names:
+            continue
+        for rel_target in _parse_rels(zf.read(sheet_rels)).values():
+            if "drawing" not in rel_target.lower():
+                continue
+            drawing = posixpath.normpath(
+                posixpath.join(posixpath.dirname(sheet_path), rel_target)
+            )
+            if drawing in names:
+                out.append((name, drawing))
+    return out
+
+
+def _anchor_pictures(xml: bytes) -> list[tuple[int, int, str]]:
+    """(row, col, rId) for each picture anchor. Rows and columns are 0-based."""
+    root = ET.fromstring(xml)
+    pics: list[tuple[int, int, str]] = []
+    for anchor in root.iter():
+        if _local(anchor.tag) not in {"twoCellAnchor", "oneCellAnchor"}:
+            continue
+        origin = None
+        rid = ""
+        for child in list(anchor):
+            if _local(child.tag) == "from" and origin is None:
+                origin = child
+            elif _local(child.tag) == "pic":
+                for el in child.iter():
+                    if _local(el.tag) == "blip":
+                        rid = _attr(el, "embed") or rid
+        if origin is None or not rid:
+            continue
+        row = col = None
+        for el in list(origin):
+            loc = _local(el.tag)
+            if loc == "row" and el.text and el.text.strip().isdigit():
+                row = int(el.text.strip())
+            elif loc == "col" and el.text and el.text.strip().isdigit():
+                col = int(el.text.strip())
+        if row is None or col is None:
+            continue
+        pics.append((row, col, rid))
+    return pics
+
+
+def _split_md_row(line: str) -> list[str]:
+    inner = line.strip()
+    if inner.startswith("|"):
+        inner = inner[1:]
+    if inner.endswith("|"):
+        inner = inner[:-1]
+    return [cell.strip() for cell in inner.split("|")]
+
+
+def _join_md_row(cells: list[str]) -> str:
+    return "| " + " | ".join(cells) + " |"
+
+
+def _is_sep_row(cells: list[str]) -> bool:
+    if not cells:
+        return False
+    return all(re.fullmatch(r":?-{3,}:?", cell.replace(" ", "")) for cell in cells)
+
+
+def splice_drawing_into_markdown(
+    markdown: str, sheet: str, row: int, col: int, rel: str
+) -> str:
+    """Put a floating picture into the Markdown cell at that sheet anchor."""
+    image = f"![]({rel})"
+    lines = markdown.splitlines()
+    start = None
+    for i, line in enumerate(lines):
+        if line.strip() == f"## {sheet}":
+            start = i + 1
+            break
+    if start is None:
+        return markdown.rstrip() + f"\n\n{image}\n"
+    section_end = len(lines)
+    for i in range(start, len(lines)):
+        if lines[i].startswith("## "):
+            section_end = i
+            break
+    table_at = None
+    for i in range(start, section_end):
+        if lines[i].strip().startswith("|"):
+            table_at = i
+            break
+    if table_at is None:
+        return markdown.rstrip() + f"\n\n{image}\n"
+
+    table_end = table_at
+    while table_end < section_end and lines[table_end].strip().startswith("|"):
+        table_end += 1
+    rows = [_split_md_row(lines[i]) for i in range(table_at, table_end)]
+    sep_at = next((i for i, cells in enumerate(rows) if _is_sep_row(cells)), None)
+    # markitdown puts Excel row 0 in the header and a separator on the next line.
+    if sep_at == 1:
+        md_index = 0 if row == 0 else row + 1
+    else:
+        md_index = row
+    if md_index < 0 or md_index >= len(rows) or (sep_at is not None and md_index == sep_at):
+        lines.insert(table_end, image)
+        return "\n".join(lines).rstrip() + "\n"
+    cells = rows[md_index]
+    while len(cells) <= col:
+        cells.append("")
+    current = cells[col]
+    if current in {"", "NaN"}:
+        cells[col] = image
+    else:
+        cells[col] = f"{current} {image}"
+    lines[table_at + md_index] = _join_md_row(cells)
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def inject_xlsx_drawing_images(
+    xlsx_path: Path,
+    markdown: str,
+    assets_dir: Path,
+    rel_prefix: str,
+) -> tuple[str, int]:
+    """Save xl/drawings pictures and splice them into the anchored cell."""
+    path = Path(xlsx_path)
+    try:
+        zf = zipfile.ZipFile(path)
+    except (OSError, zipfile.BadZipFile):
+        return markdown, 0
+    text = markdown
+    saved = 0
+    seen_members: dict[str, str] = {}
+    with zf:
+        names = set(zf.namelist())
+        for sheet, drawing in _sheet_drawings(zf, names):
+            rels_name = posixpath.normpath(
+                posixpath.join(
+                    posixpath.dirname(drawing),
+                    "_rels",
+                    posixpath.basename(drawing) + ".rels",
+                )
+            )
+            if rels_name not in names:
+                continue
+            rid_to_target = _parse_rels(zf.read(rels_name))
+            try:
+                anchors = _anchor_pictures(zf.read(drawing))
+            except ET.ParseError:
+                continue
+            for row, col, rid in anchors:
+                target = rid_to_target.get(rid)
+                if not target:
+                    continue
+                hit = _read_member(zf, names, target)
+                if hit is None:
+                    continue
+                member, data = hit
+                rel = seen_members.get(member)
+                if rel is None:
+                    saved += 1
+                    ext = _ext_from_member(member)
+                    filename = f"image_draw_{saved:03d}.{ext}"
+                    assets_dir.mkdir(parents=True, exist_ok=True)
+                    (assets_dir / filename).write_bytes(data)
+                    rel = f"{rel_prefix}/{filename}"
+                    seen_members[member] = rel
+                text = splice_drawing_into_markdown(text, sheet, row, col, rel)
+    return text, len(seen_members)
+
+
 def is_xlsx_like(path: Path) -> bool:
-    return path.suffix.lower() in XLSX_SUFFIXES
+    if path.suffix.lower() in XLSX_SUFFIXES:
+        return True
+    try:
+        with zipfile.ZipFile(path) as zf:
+            return any(name.rstrip("/") == "xl/workbook.xml" or name.startswith("xl/") for name in zf.namelist())
+    except (OSError, zipfile.BadZipFile):
+        return False

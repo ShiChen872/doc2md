@@ -585,6 +585,11 @@ def safe_stem(name: str) -> str:
     return SAFE_NAME_RE.sub("_", raw).strip("._") or "wps_document"
 
 
+def share_title(fname: str | None, sid: str) -> str:
+    """Filename stem, or the share id when the share has no filename."""
+    return Path(str(fname or "")).stem or str(sid or "")
+
+
 def titled_output_md(output_md: Path, fname: str | None, sid: str) -> Path:
     """If the caller used a placeholder name, adopt the share's document stem."""
     stem = safe_stem(fname or sid)
@@ -2485,7 +2490,7 @@ def _share_to_markdown_body(
             elif stream_path and download_blocked and not find_ffmpeg():
                 result["preview_remux"] = {"ok": False, "error": "ffmpeg not found"}
 
-            title = Path(fname).stem or sid
+            title = share_title(fname, sid)
             md = build_media_markdown(
                 title=title,
                 source_url=url,
@@ -2686,7 +2691,7 @@ def _share_to_markdown_body(
                     "Re-run wps_login.py, or export the file from the WPS UI and run convert.py."
                 )
             stats = write_pdf_preview_markdown(
-                title=Path(fname).stem or sid,
+                title=share_title(fname, sid),
                 source_url=url,
                 output_md=output_md,
                 page_files=page_files,
@@ -2724,7 +2729,7 @@ def _share_to_markdown_body(
             page_files = [p for p, _ in captured]
             headings = [name for _, name in captured]
             stats = write_pdf_preview_markdown(
-                title=Path(fname).stem or sid,
+                title=share_title(fname, sid),
                 source_url=url,
                 output_md=output_md,
                 page_files=page_files,
@@ -2771,7 +2776,7 @@ def _share_to_markdown_body(
                     "Re-run wps_login.py, or export the .pptx from the WPS UI and run convert.py."
                 )
             stats = write_pdf_preview_markdown(
-                title=Path(fname).stem or sid,
+                title=share_title(fname, sid),
                 source_url=url,
                 output_md=output_md,
                 page_files=page_files,
@@ -2814,7 +2819,7 @@ def _share_to_markdown_body(
             page_files = [p for p, _ in captured]
             headings = [name for _, name in captured]
             stats = write_pdf_preview_markdown(
-                title=Path(fname).stem or sid,
+                title=share_title(fname, sid),
                 source_url=url,
                 output_md=output_md,
                 page_files=page_files,
@@ -2866,7 +2871,7 @@ def _share_to_markdown_body(
             page_files = [p for p, _ in captured]
             headings = [name for _, name in captured]
             stats = write_pdf_preview_markdown(
-                title=Path(fname).stem or sid,
+                title=share_title(fname, sid),
                 source_url=url,
                 output_md=output_md,
                 page_files=page_files,
@@ -2910,7 +2915,7 @@ def _share_to_markdown_body(
             page_files = [p for p, _ in captured]
             headings = [name for _, name in captured]
             stats = write_pdf_preview_markdown(
-                title=Path(fname).stem or sid,
+                title=share_title(fname, sid),
                 source_url=url,
                 output_md=output_md,
                 page_files=page_files,
@@ -2944,6 +2949,7 @@ def _share_to_markdown_body(
             output_md = titled_output_md(output_md, fname, sid)
             result["output"] = str(output_md)
             from wps_word_model import (
+                capture_loose_word_pictures,
                 capture_word_figures,
                 extract_word_model,
                 figure_captions_from_paras,
@@ -2957,13 +2963,15 @@ def _share_to_markdown_body(
                 figures = (
                     capture_word_figures(page, assets_dir, captions) if captions else {}
                 )
+                loose_images = capture_loose_word_pictures(page, assets_dir, model)
                 browser.close()
                 stats = write_word_model_markdown(
-                    title=Path(fname).stem or sid,
+                    title=share_title(fname, sid),
                     source_url=url,
                     output_md=output_md,
                     model=model,
                     figures=figures,
+                    loose_images=loose_images,
                 )
                 result["mode"] = "word-model"
                 result["convert"] = stats
@@ -2981,7 +2989,7 @@ def _share_to_markdown_body(
                     "Re-run wps_login.py, or export the .docx from the WPS UI and run convert.py."
                 )
             stats = write_pdf_preview_markdown(
-                title=Path(fname).stem or sid,
+                title=share_title(fname, sid),
                 source_url=url,
                 output_md=output_md,
                 page_files=page_files,

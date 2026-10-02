@@ -15,8 +15,10 @@ For xlsx / ksheet, DISPIMG cell pictures are copied from xl/media.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parent
@@ -316,6 +318,9 @@ def convert_pptx_as_slides(
 
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tif", ".tiff"}
+LEGACY_OFFICE_SUFFIXES = {".doc", ".dot", ".wps", ".xls", ".xlt", ".ppt", ".pps"}
+_OLE_MAGIC = b"\xd0\xcf\x11\xe0"
+_PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
 
 def _sort_ocr_lines(items: list) -> list[str]:
@@ -390,6 +395,82 @@ def convert_image_file(
     return "\n".join(parts).strip() + "\n", 1
 
 
+def ooxml_package_kind(path: Path) -> str | None:
+    """Return pptx / docx / xlsx when a file is an Office zip, whatever the suffix is."""
+    import zipfile
+
+    try:
+        with zipfile.ZipFile(path) as zf:
+            names = zf.namelist()
+    except Exception:
+        return None
+    if any(name.startswith("ppt/") for name in names):
+        return "pptx"
+    if any(name.startswith("word/") for name in names):
+        return "docx"
+    if any(name.startswith("xl/") for name in names):
+        return "xlsx"
+    return None
+
+
+def _copy_with_suffix(src: Path, suffix: str) -> tuple[Path, tempfile.TemporaryDirectory[str]]:
+    holder = tempfile.TemporaryDirectory(prefix="doc2md_ooxml_")
+    dest = Path(holder.name) / f"{src.stem}{suffix}"
+    dest.write_bytes(src.read_bytes())
+    return dest, holder
+
+
+def extract_ole_embedded_images(
+    data: bytes, assets_dir: Path, rel_prefix: str
+) -> list[str]:
+    """Pull PNG/JPEG blobs out of a legacy OLE Office file."""
+    if not data.startswith(_OLE_MAGIC):
+        return []
+    blobs: list[tuple[str, bytes]] = []
+    seen: set[str] = set()
+
+    def keep(ext: str, blob: bytes) -> None:
+        if len(blob) < 800 or len(blob) > 15_000_000:
+            return
+        digest = hashlib.sha256(blob).hexdigest()
+        if digest in seen:
+            return
+        seen.add(digest)
+        blobs.append((ext, blob))
+
+    start = 0
+    while len(blobs) < 40:
+        i = data.find(_PNG_MAGIC, start)
+        if i < 0:
+            break
+        end = data.find(b"IEND", i + 8)
+        start = i + 8
+        if end < 0:
+            continue
+        keep("png", data[i : end + 8])
+
+    start = 0
+    while len(blobs) < 40:
+        i = data.find(b"\xff\xd8\xff", start)
+        if i < 0:
+            break
+        end = data.find(b"\xff\xd9", i + 3)
+        start = i + 3
+        if end < 0:
+            break
+        keep("jpg", data[i : end + 2])
+
+    if not blobs:
+        return []
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    rels: list[str] = []
+    for n, (ext, blob) in enumerate(blobs, start=1):
+        filename = f"image_ole_{n:03d}.{ext}"
+        (assets_dir / filename).write_bytes(blob)
+        rels.append(f"{rel_prefix}/{filename}")
+    return rels
+
+
 def convert(
     input_path: Path,
     output_path: Path,
@@ -430,34 +511,69 @@ def convert(
         rel_prefix = assets_dir.as_posix()
 
     suffix = input_path.suffix.lower()
+    work_path = input_path
+    holder: tempfile.TemporaryDirectory[str] | None = None
+    kind = ooxml_package_kind(input_path)
+    if kind == "pptx" and suffix not in {".pptx", ".pptm"}:
+        work_path, holder = _copy_with_suffix(input_path, ".pptx")
+        suffix = ".pptx"
+    elif kind == "docx" and suffix not in {".docx", ".docm", ".dotx"}:
+        work_path, holder = _copy_with_suffix(input_path, ".docx")
+        suffix = ".docx"
+    elif kind == "xlsx" and suffix not in {".xlsx", ".xlsm", ".xltx", ".xltm", ".ksheet"}:
+        work_path, holder = _copy_with_suffix(input_path, ".xlsx")
+        suffix = ".xlsx"
     md = MarkItDown()
     uri_count = 0
     pdf_count = 0
     pptx_count = 0
     image_count = 0
     xlsx_count = 0
+    ole_count = 0
 
-    if suffix in IMAGE_SUFFIXES:
-        text, image_count = convert_image_file(
-            input_path, assets_dir, rel_prefix, title=stem, clear=False
-        )
-    # PPTX: one screenshot per slide + theme text (not per-icon extraction).
-    elif suffix in {".pptx", ".pptm"}:
-        text, pptx_count = convert_pptx_as_slides(
-            input_path, assets_dir, rel_prefix, clear=False
-        )
-    else:
-        # keep_data_uris must be passed to convert(), not __init__
-        result = md.convert(str(input_path), keep_data_uris=True)
-        text = result.text_content or ""
-        text, uri_count = extract_data_uris(text, assets_dir, rel_prefix)
-
-        from xlsx_images import inject_xlsx_cell_images, is_xlsx_like
-
-        if is_xlsx_like(input_path):
-            text, xlsx_count = inject_xlsx_cell_images(
-                input_path, text, assets_dir, rel_prefix
+    try:
+        if suffix in IMAGE_SUFFIXES:
+            text, image_count = convert_image_file(
+                work_path, assets_dir, rel_prefix, title=stem, clear=False
             )
+        # PPTX: one screenshot per slide + theme text (not per-icon extraction).
+        elif suffix in {".pptx", ".pptm"}:
+            text, pptx_count = convert_pptx_as_slides(
+                work_path, assets_dir, rel_prefix, clear=False
+            )
+        else:
+            # keep_data_uris must be passed to convert(), not __init__
+            legacy = input_path.suffix.lower() in LEGACY_OFFICE_SUFFIXES and kind is None
+            try:
+                result = md.convert(str(work_path), keep_data_uris=True)
+                text = result.text_content or ""
+            except Exception:
+                if not legacy:
+                    raise
+                text = (
+                    f"> **Note:** 未能从 `{input_path.name}` 抽出正文。"
+                    "旧版 Office 二进制没有逐页截图；下面只保留文件里嵌着的图片。\n"
+                )
+            text, uri_count = extract_data_uris(text, assets_dir, rel_prefix)
+
+            from xlsx_images import inject_xlsx_cell_images, inject_xlsx_drawing_images, is_xlsx_like
+
+            if is_xlsx_like(work_path):
+                text, cell_count = inject_xlsx_cell_images(
+                    work_path, text, assets_dir, rel_prefix
+                )
+                text, draw_count = inject_xlsx_drawing_images(
+                    work_path, text, assets_dir, rel_prefix
+                )
+                xlsx_count = cell_count + draw_count
+            elif legacy:
+                ole_rels = extract_ole_embedded_images(
+                    input_path.read_bytes(), assets_dir, rel_prefix
+                )
+                ole_count = len(ole_rels)
+                if ole_rels:
+                    body = "\n\n".join(f"![]({rel})" for rel in ole_rels)
+                    text = text.rstrip() + "\n\n## 内嵌图片\n\n" + body + "\n"
 
         if suffix == ".pdf":
             page_texts = analyze_pdf_pages(input_path)
@@ -478,6 +594,9 @@ def convert(
                     )
                     text = inject_pdf_scan_ocr(text, scan)
                     pdf_count += len(scan)
+    finally:
+        if holder is not None:
+            holder.cleanup()
 
     output_path.write_text(text, encoding="utf-8")
 
@@ -497,7 +616,8 @@ def convert(
         "images_from_pptx": pptx_count,
         "images_from_image_file": image_count,
         "images_from_xlsx": xlsx_count,
-        "images_total": uri_count + pdf_count + pptx_count + image_count + xlsx_count,
+        "images_from_ole": ole_count,
+        "images_total": uri_count + pdf_count + pptx_count + image_count + xlsx_count + ole_count,
         "markdown_chars": len(text),
     }
     return stats

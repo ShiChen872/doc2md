@@ -277,6 +277,28 @@ SERIALIZE_BLOCK_TREE_JS = """
         };
       case 'diagram':
         return { ...base, diagram: {} };
+      case 'poll': {
+        const poll = snapshot.poll ?? {};
+        const rawOptions = Array.isArray(poll.options)
+          ? poll.options
+          : (Array.isArray(snapshot.options) ? snapshot.options : []);
+        const options = rawOptions.map((opt) => {
+          if (typeof opt === 'string') return opt;
+          return opt?.text ?? opt?.name ?? opt?.option ?? '';
+        }).filter(Boolean);
+        return {
+          ...base,
+          title: poll.title ?? snapshot.title ?? '',
+          options,
+        };
+      }
+      case 'chat_card': {
+        const card = snapshot.chat_card ?? snapshot.chatCard ?? {};
+        return {
+          ...base,
+          title: card.title ?? snapshot.title ?? '',
+        };
+      }
       case 'isv':
         return {
           ...base,
@@ -727,12 +749,74 @@ def _dismiss_feishu_guides(page: Any) -> None:
             continue
 
 
+def grid_rows_to_markdown(rows: list[list[str]]) -> str:
+    """Render a visible grid (header + at least one body row) as a Markdown table."""
+    cleaned: list[list[str]] = []
+    for row in rows:
+        cells = [str(cell).replace("|", "\\|").replace("\n", " ").strip() for cell in row]
+        if any(cells):
+            cleaned.append(cells)
+    while cleaned and all(row[:1] == [""] or not row for row in cleaned):
+        cleaned = [row[1:] for row in cleaned]
+    if len(cleaned) < 2:
+        return ""
+    width = max(len(row) for row in cleaned)
+    norm = [row + [""] * (width - len(row)) for row in cleaned]
+    lines = [
+        "| " + " | ".join(norm[0]) + " |",
+        "| " + " | ".join("---" for _ in range(width)) + " |",
+    ]
+    for row in norm[1:]:
+        lines.append("| " + " | ".join(row) + " |")
+    return "\n".join(lines)
+
+
+READ_VISIBLE_GRID_JS = r"""() => {
+  const cells = [...document.querySelectorAll('[role="gridcell"], [role="columnheader"]')];
+  const byRow = new Map();
+  for (const el of cells) {
+    const rowEl = el.closest('[role="row"]');
+    const rowAttr = el.getAttribute('aria-rowindex') || (rowEl && rowEl.getAttribute('aria-rowindex'));
+    const colAttr = el.getAttribute('aria-colindex');
+    if (!rowAttr || !colAttr) continue;
+    const row = Number(rowAttr);
+    const col = Number(colAttr);
+    if (!Number.isFinite(row) || !Number.isFinite(col)) continue;
+    if (!byRow.has(row)) byRow.set(row, []);
+    const bucket = byRow.get(row);
+    bucket[col] = (el.innerText || '').trim();
+  }
+  return [...byRow.keys()].sort((a, b) => a - b).map((row) => {
+    const bucket = byRow.get(row) || [];
+    const out = [];
+    for (let i = 0; i < bucket.length; i++) out.push(bucket[i] || '');
+    return out;
+  });
+}"""
+
+
+def read_visible_grid(page: Any) -> list[list[str]]:
+    """Read on-screen grid cells. Virtualized sheets only include the visible rows."""
+    try:
+        rows = page.evaluate(READ_VISIBLE_GRID_JS)
+    except Exception:
+        return []
+    if not isinstance(rows, list):
+        return []
+    out: list[list[str]] = []
+    for row in rows:
+        if isinstance(row, list):
+            out.append([str(cell) for cell in row])
+    return out
+
+
 def build_feishu_preview_markdown(
     *,
     title: str,
     source_url: str,
     kind: str,
     pages: list[tuple[str, str]],
+    grid_rows: list[list[str]] | None = None,
 ) -> str:
     """Markdown for a Feishu board / bitable / sheet / mindnote share captured from the web viewer."""
     meta = PREVIEW_META.get(kind) or PREVIEW_META["base"]
@@ -749,6 +833,12 @@ def build_feishu_preview_markdown(
         lines.append(f"## {heading or f'{default_h} {i}'}")
         lines.append("")
         lines.append(f"![]({rel})")
+        lines.append("")
+    table = grid_rows_to_markdown(grid_rows or [])
+    if table and kind in {"sheet", "base"}:
+        lines.append("## 可见单元格")
+        lines.append("")
+        lines.append(table)
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -849,6 +939,7 @@ def write_feishu_preview_markdown(
     page_files: list[Path],
     kind: str,
     headings: list[str] | None = None,
+    grid_rows: list[list[str]] | None = None,
 ) -> dict[str, Any]:
     assets_dir = page_files[0].parent if page_files else output_md.parent
     pages: list[tuple[str, str]] = []
@@ -859,7 +950,11 @@ def write_feishu_preview_markdown(
             heading = str(headings[i] or "").strip()
         pages.append((rel, heading))
     md = build_feishu_preview_markdown(
-        title=title, source_url=source_url, kind=kind, pages=pages
+        title=title,
+        source_url=source_url,
+        kind=kind,
+        pages=pages,
+        grid_rows=grid_rows,
     )
     output_md.parent.mkdir(parents=True, exist_ok=True)
     output_md.write_text(md, encoding="utf-8")
@@ -1258,7 +1353,11 @@ def _render_block(block: dict[str, Any], indent: int = 0) -> str:
         return _render_blocks(_iter_children(block), indent)
 
     if block_type in ASSET_BLOCK_TYPES:
-        return _render_asset_block(block, indent)
+        asset = _render_asset_block(block, indent)
+        child = _render_blocks(_iter_children(block), indent)
+        if child:
+            return f"{asset}\n\n{child}"
+        return asset
 
     if block_type == "iframe":
         iframe = ((block.get("snapshot") or {}).get("iframe") or {})
@@ -1283,11 +1382,21 @@ def _render_block(block: dict[str, Any], indent: int = 0) -> str:
     if block_type == "isv":
         return _render_isv(block, indent)
 
-    if block_type in {
-        "chat_card",
-        "poll",
-    }:
-        return f"{' ' * indent}<!-- skipped feishu block: {block_type} -->"
+    if block_type == "poll":
+        snapshot = block.get("snapshot") or {}
+        options = [str(opt).strip() for opt in (snapshot.get("options") or []) if str(opt).strip()]
+        title = _clean_text(snapshot.get("title") or "") or "投票"
+        if options:
+            lines = [f"{' ' * indent}**{title}**"]
+            lines.extend(f"{' ' * indent}- {opt}" for opt in options)
+            return "\n".join(lines)
+        return f"{' ' * indent}<!-- skipped feishu block: poll -->"
+
+    if block_type == "chat_card":
+        title = _clean_text((block.get("snapshot") or {}).get("title") or "")
+        if title:
+            return f"{' ' * indent}**聊天卡片** {title}"
+        return f"{' ' * indent}<!-- skipped feishu block: chat_card -->"
 
     if block_type in {
         "synced_source",
@@ -1601,6 +1710,11 @@ def share_to_markdown(
                     captured = capture_feishu_preview_pages(
                         page, assets_dir, kind=preview_kind
                     )
+                    grid_rows = (
+                        read_visible_grid(page)
+                        if preview_kind in {"sheet", "base"}
+                        else []
+                    )
                     if not captured:
                         raise FeishuError(
                             "Could not capture the Feishu viewer. "
@@ -1613,6 +1727,7 @@ def share_to_markdown(
                         page_files=[p for p, _ in captured],
                         kind=preview_kind,
                         headings=[name for _, name in captured],
+                        grid_rows=grid_rows,
                     )
                     result = {
                         "ok": True,

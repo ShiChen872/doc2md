@@ -257,3 +257,30 @@ def test_format_pptx_slides_markdown_pages_notes_and_images():
     assert "开场" in first
     assert "slide_001.png" in first
     assert "四段结构" not in first
+
+
+def test_ooxml_package_kind_ignores_legacy_suffix(tmp_path: Path):
+    import zipfile
+
+    deck = tmp_path / "deck.ppt"
+    with zipfile.ZipFile(deck, "w") as zf:
+        zf.writestr("ppt/presentation.xml", "<p/>")
+    book = tmp_path / "book.xls"
+    with zipfile.ZipFile(book, "w") as zf:
+        zf.writestr("xl/workbook.xml", "<workbook/>")
+    prose = tmp_path / "note.doc"
+    with zipfile.ZipFile(prose, "w") as zf:
+        zf.writestr("word/document.xml", "<document/>")
+    assert conv.ooxml_package_kind(deck) == "pptx"
+    assert conv.ooxml_package_kind(book) == "xlsx"
+    assert conv.ooxml_package_kind(prose) == "docx"
+    assert conv.ooxml_package_kind(tmp_path / "missing.doc") is None
+
+
+def test_ole_embedded_png_is_extracted(tmp_path: Path):
+    png = b"\x89PNG\r\n\x1a\n" + (b"x" * 900) + b"IEND" + b"\x00\x00\x00\x00"
+    data = b"\xd0\xcf\x11\xe0" + (b"\x00" * 32) + png
+    rels = conv.extract_ole_embedded_images(data, tmp_path / "assets", "assets")
+    assert rels == ["assets/image_ole_001.png"]
+    assert (tmp_path / "assets" / "image_ole_001.png").read_bytes().startswith(b"\x89PNG")
+    assert conv.extract_ole_embedded_images(b"not ole", tmp_path / "assets", "assets") == []

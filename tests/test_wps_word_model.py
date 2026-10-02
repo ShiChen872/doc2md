@@ -83,6 +83,48 @@ def test_figure_caption_and_image_insert():
     )
     assert "![图1 文档中心多中心架构图](方案_assets/fig_001.png)" in md
     assert "图1 文档中心多中心架构图" in md
+    assert md.count("fig_001.png") == 1
+
+
+def test_loose_picture_inserts_at_placeholder():
+    md = paragraphs_to_markdown(
+        [
+            {"text": "架构说明", "style": "正文"},
+            {"text": "\x01", "style": "正文"},
+            {"text": "下一段", "style": "正文"},
+        ],
+        loose_images=["方案_assets/pic_001.png"],
+    )
+    assert "架构说明" in md
+    assert "![](方案_assets/pic_001.png)" in md
+    assert md.index("pic_001.png") < md.index("下一段")
+
+
+def test_loose_picture_skips_when_caption_already_captured():
+    md = paragraphs_to_markdown(
+        [
+            {"text": "\x01", "style": "正文"},
+            {"text": "图1 架构图", "style": "正文"},
+        ],
+        figures={"图1架构图": "方案_assets/fig_001.png"},
+        loose_images=["方案_assets/pic_001.png"],
+    )
+    assert "![图1 架构图](方案_assets/fig_001.png)" in md
+    assert "![](方案_assets/pic_001.png)" in md
+    assert md.index("fig_001.png") < md.index("![](方案_assets/pic_001.png)")
+
+
+def test_table_cell_picture():
+    md = paragraphs_to_markdown(
+        [
+            {"text": "名称", "style": "正文", "table": True},
+            {"text": "\x01", "style": "正文", "table": True},
+            {"text": "", "style": "正文", "table": True, "table_row": True},
+        ],
+        loose_images=["方案_assets/pic_001.png"],
+    )
+    assert "![](方案_assets/pic_001.png)" in md
+    assert "| 名称 | ![](方案_assets/pic_001.png) |" in md
 
 
 def test_data_uri_figure_bytes(tmp_path):

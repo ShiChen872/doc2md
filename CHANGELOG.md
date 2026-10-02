@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- WPS preview and media titles fall back to the share id when the filename is empty. Those paths referenced an undefined `stem`, so ruff failed CI before pytest ran.
+
 ## v0.4.32
 
 - OTL CircleColumn cards keep pictures in the table body instead of empty cells.

@@ -2485,7 +2485,7 @@ def _share_to_markdown_body(
             elif stream_path and download_blocked and not find_ffmpeg():
                 result["preview_remux"] = {"ok": False, "error": "ffmpeg not found"}
 
-            title = Path(fname).stem or stem
+            title = Path(fname).stem or sid
             md = build_media_markdown(
                 title=title,
                 source_url=url,
@@ -2686,7 +2686,7 @@ def _share_to_markdown_body(
                     "Re-run wps_login.py, or export the file from the WPS UI and run convert.py."
                 )
             stats = write_pdf_preview_markdown(
-                title=Path(fname).stem or stem,
+                title=Path(fname).stem or sid,
                 source_url=url,
                 output_md=output_md,
                 page_files=page_files,
@@ -2724,7 +2724,7 @@ def _share_to_markdown_body(
             page_files = [p for p, _ in captured]
             headings = [name for _, name in captured]
             stats = write_pdf_preview_markdown(
-                title=Path(fname).stem or stem,
+                title=Path(fname).stem or sid,
                 source_url=url,
                 output_md=output_md,
                 page_files=page_files,
@@ -2771,7 +2771,7 @@ def _share_to_markdown_body(
                     "Re-run wps_login.py, or export the .pptx from the WPS UI and run convert.py."
                 )
             stats = write_pdf_preview_markdown(
-                title=Path(fname).stem or stem,
+                title=Path(fname).stem or sid,
                 source_url=url,
                 output_md=output_md,
                 page_files=page_files,
@@ -2814,7 +2814,7 @@ def _share_to_markdown_body(
             page_files = [p for p, _ in captured]
             headings = [name for _, name in captured]
             stats = write_pdf_preview_markdown(
-                title=Path(fname).stem or stem,
+                title=Path(fname).stem or sid,
                 source_url=url,
                 output_md=output_md,
                 page_files=page_files,
@@ -2866,7 +2866,7 @@ def _share_to_markdown_body(
             page_files = [p for p, _ in captured]
             headings = [name for _, name in captured]
             stats = write_pdf_preview_markdown(
-                title=Path(fname).stem or stem,
+                title=Path(fname).stem or sid,
                 source_url=url,
                 output_md=output_md,
                 page_files=page_files,
@@ -2910,7 +2910,7 @@ def _share_to_markdown_body(
             page_files = [p for p, _ in captured]
             headings = [name for _, name in captured]
             stats = write_pdf_preview_markdown(
-                title=Path(fname).stem or stem,
+                title=Path(fname).stem or sid,
                 source_url=url,
                 output_md=output_md,
                 page_files=page_files,

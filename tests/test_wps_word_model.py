@@ -127,6 +127,51 @@ def test_table_cell_picture():
     assert "| 名称 | ![](方案_assets/pic_001.png) |" in md
 
 
+def test_inline_bold_label_table_and_heading():
+    label = "调研关注点：销售管理希望看数。"
+    cover = "让销售经验、客户信息与经营数据\x0b真正转化为一线生产力"
+    md = paragraphs_to_markdown(
+        [
+            {"text": "销售 AI 提效调研", "style": "正文", "bold": [[0, 10]]},
+            {"text": label, "style": "正文", "bold": [[0, 6]]},
+            {"text": "场景", "style": "正文", "table": True, "bold": [[0, 2]]},
+            {"text": "当前工作关注点", "style": "正文", "table": True, "bold": [[0, 7]]},
+            {"text": "", "style": "正文", "table": True, "table_row": True},
+            {"text": "核心结论", "style": "标题 1", "bold": [[0, 4]]},
+            {"text": cover, "style": "正文", "bold": [[0, 15], [16, 26]]},
+            {"text": "高可用性", "style": "正文", "list_id": 1, "bold": [[0, 4]]},
+        ]
+    )
+    assert "**销售 AI 提效调研**" in md
+    assert "**调研关注点：**销售管理希望看数。" in md
+    assert "| **场景** | **当前工作关注点** |" in md
+    assert "# 核心结论" in md
+    assert "**核心结论**" not in md
+    assert "**让销售经验、客户信息与经营数据真正转化为一线生产力**" in md
+    assert "- **高可用性**" in md
+
+
+def test_bold_follows_field_display_text():
+    raw = (
+        "\x13 HYPERLINK \\l _Toc1 \x14修订记录\t"
+        "\x13 PAGEREF _Toc1 \\h \x143\x15\x15"
+    )
+    start = raw.index("修订记录")
+    md = paragraphs_to_markdown(
+        [{"text": raw, "style": "正文", "bold": [[start, start + 4]]}]
+    )
+    assert "**修订记录** 3" in md
+    assert "HYPERLINK" not in md
+    instruction = "\x13 HYPERLINK \x14可见\x15"
+    inst = instruction.index("HYPERLINK")
+    plain = paragraphs_to_markdown(
+        [{"text": instruction, "style": "正文", "bold": [[inst, inst + 9]]}]
+    )
+    assert "可见" in plain
+    assert "**" not in plain
+    assert "HYPERLINK" not in plain
+
+
 def test_data_uri_figure_bytes(tmp_path):
     raw = b"\x89PNG\r\n\x1a\n" + b"x" * 900
     href = "data:image/png;base64," + __import__("base64").b64encode(raw).decode("ascii")

@@ -2,7 +2,8 @@
 
 Share links often deny the original .docx. After weboffice loads, APP.data.doc
 exposes the text stream plus paragraph styles (标题 1 / 正文 / 目录), tables,
-and lists. That is enough to emit real Markdown instead of page screenshots.
+lists, and character bold. That is enough to emit real Markdown instead of
+page screenshots.
 """
 
 from __future__ import annotations
@@ -49,9 +50,38 @@ EXTRACT_WORD_MODEL_JS = r"""() => {
       table_row = !!(pap.table_row) || pap.para_type === 2;
       nest_level = pap.nest_level || 0;
     } catch (e) {}
-    paras.push({
+    const bold = [];
+    try {
+      let pos = i;
+      let guard = 0;
+      while (pos < stop && guard < 4000) {
+        guard++;
+        let cx = null;
+        try { cx = ts.getChpx(pos); } catch (e) {}
+        const prop = (cx && cx.prop) || {};
+        const isBold = prop.bold === true || prop.bold === 1;
+        const runStart = cx && typeof cx.pos === 'number' ? cx.pos : pos;
+        const runLen = cx && cx.len > 0 ? cx.len : 1;
+        let runEnd = runStart + runLen;
+        if (runEnd <= pos) runEnd = pos + 1;
+        const to = Math.min(stop, runEnd);
+        if (isBold) {
+          const a = pos - i;
+          const z = to - i;
+          if (z > a) {
+            const prev = bold[bold.length - 1];
+            if (prev && prev[1] === a) prev[1] = z;
+            else bold.push([a, z]);
+          }
+        }
+        pos = to;
+      }
+    } catch (e) {}
+    const para = {
       text, style, align, list_id, list_level, table, table_row, nest_level,
-    });
+    };
+    if (bold.length) para.bold = bold;
+    paras.push(para);
     if (end < 0) break;
     i = end + 1;
   }
@@ -138,16 +168,134 @@ FIND_WORD_FIGURES_JS = r"""(needles) => {
 
 def strip_word_fields(text: str) -> str:
     """Keep Word field display text; drop TOC/HYPERLINK instructions."""
-    s = str(text or "")
-    prev = None
-    while prev != s:
-        prev = s
-        s = FIELD_INNER_RE.sub(r"\1", s)
-    s = CONTROL_RE.sub("", s)
-    s = re.sub(r"\x13[^\x14\x15]*\x14?", "", s)
-    s = re.sub(r'^TOC\s*\\o\s*"[^"]*"\s*\\h\s*\\u\s*', "", s)
-    s = s.replace("\t", " ")
-    return re.sub(r" {2,}", " ", s).strip()
+    return _plain_word_tokens(str(text or ""))
+
+
+def _bold_mask(text: str, spans: object) -> list[bool]:
+    mask = [False] * len(text)
+    if not isinstance(spans, list):
+        return mask
+    for span in spans:
+        if not isinstance(span, (list, tuple)) or len(span) != 2:
+            continue
+        try:
+            start, end = int(span[0]), int(span[1])
+        except (TypeError, ValueError):
+            continue
+        start = max(0, start)
+        end = min(len(text), end)
+        for i in range(start, end):
+            mask[i] = True
+    return mask
+
+
+def _strip_field_tokens(tokens: list[tuple[str, bool]]) -> list[tuple[str, bool]]:
+    """Same replacements as FIELD_INNER_RE, keeping the bold flag on display text."""
+    changed = True
+    while changed:
+        changed = False
+        i = 0
+        while i < len(tokens):
+            if tokens[i][0] != "\x13":
+                i += 1
+                continue
+            j = i + 1
+            while j < len(tokens) and tokens[j][0] not in "\x13\x14\x15":
+                j += 1
+            if j >= len(tokens) or tokens[j][0] != "\x14":
+                i += 1
+                continue
+            k = j + 1
+            while k < len(tokens) and tokens[k][0] not in "\x13\x15":
+                k += 1
+            if k >= len(tokens) or tokens[k][0] != "\x15":
+                i += 1
+                continue
+            tokens = tokens[:i] + tokens[j + 1 : k] + tokens[k + 1 :]
+            changed = True
+            break
+    return tokens
+
+
+def _drop_broken_fields(tokens: list[tuple[str, bool]]) -> list[tuple[str, bool]]:
+    """Drop a leftover ``\\x13`` instruction, including one optional ``\\x14``."""
+    out: list[tuple[str, bool]] = []
+    i = 0
+    while i < len(tokens):
+        if tokens[i][0] != "\x13":
+            out.append(tokens[i])
+            i += 1
+            continue
+        j = i + 1
+        while j < len(tokens) and tokens[j][0] not in "\x14\x15":
+            j += 1
+        i = j + 1 if j < len(tokens) and tokens[j][0] == "\x14" else j
+    return out
+
+
+def visible_word_tokens(text: str, bold: object = None) -> list[tuple[str, bool]]:
+    """Visible characters of one Word paragraph, aligned with ``strip_word_fields``."""
+    raw = str(text or "")
+    mask = _bold_mask(raw, bold)
+    tokens = [(ch, mask[i]) for i, ch in enumerate(raw)]
+    tokens = _strip_field_tokens(tokens)
+    tokens = [(ch, flag) for ch, flag in tokens if CONTROL_RE.fullmatch(ch) is None]
+    tokens = _drop_broken_fields(tokens)
+    plain = "".join(ch for ch, _ in tokens)
+    toc = re.match(r'^TOC\s*\\o\s*"[^"]*"\s*\\h\s*\\u\s*', plain)
+    if toc:
+        tokens = tokens[toc.end() :]
+    tokens = [(" " if ch == "\t" else ch, flag) for ch, flag in tokens]
+    collapsed: list[tuple[str, bool]] = []
+    for ch, flag in tokens:
+        if ch == " " and collapsed and collapsed[-1][0] == " ":
+            continue
+        collapsed.append((ch, flag))
+    plain = "".join(ch for ch, _ in collapsed)
+    stripped = plain.strip()
+    if not stripped:
+        return []
+    start = len(plain) - len(plain.lstrip())
+    return collapsed[start : start + len(stripped)]
+
+
+def _plain_word_tokens(text: str) -> str:
+    return "".join(ch for ch, _ in visible_word_tokens(text))
+
+
+def render_word_tokens(tokens: list[tuple[str, bool]]) -> str:
+    """Wrap bold runs in ``**``. A bold-only heading should pass the plain text."""
+    if not any(flag for _, flag in tokens):
+        return "".join(ch for ch, _ in tokens)
+    parts: list[str] = []
+    i = 0
+    while i < len(tokens):
+        flag = tokens[i][1]
+        j = i + 1
+        while j < len(tokens) and tokens[j][1] == flag:
+            j += 1
+        chunk = "".join(ch for ch, _ in tokens[i:j])
+        if flag:
+            core = chunk.strip(" ")
+            if core:
+                lead = len(chunk) - len(chunk.lstrip(" "))
+                trail = len(chunk) - len(chunk.rstrip(" "))
+                parts.append(" " * lead)
+                parts.append("**" + core.replace("\\", "\\\\").replace("*", "\\*") + "**")
+                if trail:
+                    parts.append(" " * trail)
+            else:
+                parts.append(chunk)
+        else:
+            parts.append(chunk)
+        i = j
+    return "".join(parts)
+
+
+def word_plain_and_marked(text: str, bold: object = None) -> tuple[str, str]:
+    tokens = visible_word_tokens(text, bold)
+    plain = "".join(ch for ch, _ in tokens)
+    return plain, render_word_tokens(tokens)
 
 
 def heading_level(style: str) -> int | None:
@@ -202,8 +350,9 @@ def _is_control_only(text: str) -> bool:
     )
 
 
-def _esc_cell(text: str) -> str:
-    return strip_word_fields(text).replace("|", "\\|").replace("\n", "<br>")
+def _esc_cell(text: str, bold: object = None) -> str:
+    _plain, marked = word_plain_and_marked(text, bold)
+    return marked.replace("|", "\\|").replace("\n", "<br>")
 
 
 def _flush_table(rows: list[list[str]], lines: list[str]) -> None:
@@ -271,8 +420,11 @@ def paragraphs_to_markdown(
     for index, para in enumerate(paras):
         text = str(para.get("text") or "")
         style = str(para.get("style") or "正文")
+        tokens = visible_word_tokens(text, para.get("bold"))
+        plain = "".join(ch for ch, _ in tokens)
+        marked = render_word_tokens(tokens)
         placeholders = text.count("\x01")
-        picture_only = bool(placeholders) and not strip_word_fields(text)
+        picture_only = bool(placeholders) and not plain
         claimed = picture_only and _next_captured_caption(paras, index, figures)
         if para.get("table"):
             if para.get("table_row"):
@@ -280,7 +432,7 @@ def paragraphs_to_markdown(
                     table_rows.append(table_row)
                     table_row = []
             else:
-                cell = _esc_cell(text)
+                cell = _esc_cell(text, para.get("bold"))
                 if placeholders and not claimed:
                     imgs = " ".join(f"![]({rel})" for rel in take_loose(placeholders))
                     cell = f"{imgs} {cell}".strip() if cell else imgs
@@ -297,36 +449,36 @@ def paragraphs_to_markdown(
             if picture_only:
                 continue
         close_table()
-        cleaned = strip_word_fields(text)
-        if not cleaned:
+        if not plain:
             if in_list:
                 close_list()
             continue
         level = heading_level(style)
         if level:
             close_list()
-            lines.append(f"{'#' * level} {cleaned}")
+            # Heading marks already carry weight. Keep ** only for a partial run.
+            shown = plain if marked == f"**{plain}**" else marked
+            lines.append(f"{'#' * level} {shown}")
             lines.append("")
             continue
         if TOC_STYLE_RE.match(style):
             close_list()
-            lines.append(f"- {cleaned}")
+            lines.append(f"- {marked}")
             in_list = True
             continue
-        bullet = para.get("list_id") is not None or cleaned.startswith(
-            ("●", "•", "·", "- ")
-        )
+        bullet = para.get("list_id") is not None or plain.startswith(("●", "•", "·", "- "))
         if bullet:
-            item = re.sub(r"^[●•·]\s*", "", cleaned)
-            lines.append(f"- {item}")
+            marker = re.match(r"^[●•·]\s*", plain)
+            item_tokens = tokens[marker.end() :] if marker else tokens
+            lines.append(f"- {render_word_tokens(item_tokens)}")
             in_list = True
             continue
         close_list()
-        rel = figures.get(norm_caption(cleaned))
-        if rel and is_figure_caption(cleaned):
-            lines.append(f"![{cleaned}]({rel})")
+        rel = figures.get(norm_caption(plain))
+        if rel and is_figure_caption(plain):
+            lines.append(f"![{plain}]({rel})")
             lines.append("")
-        lines.append(cleaned)
+        lines.append(marked)
         lines.append("")
 
     close_table()
@@ -345,7 +497,7 @@ def build_word_model_markdown(
 ) -> str:
     lines = [
         f"> 来源: {source_url}",
-        "> 类型: WPS 文字分享（按文档样式还原：标题 / 表格 / 列表；「图N」用原图，其余插图按占位插入）",
+        "> 类型: WPS 文字分享（按文档样式还原：标题 / 表格 / 列表 / 加粗；「图N」用原图，其余插图按占位插入）",
         "",
         f"# {title}",
         "",

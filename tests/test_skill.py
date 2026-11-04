@@ -91,8 +91,10 @@ def test_pack_comate_injects_display_name(tmp_path: Path):
     script = ROOT / "pack-comate.sh"
     subprocess.check_call(["bash", str(script), "--inject", str(src)])
     fm = _frontmatter(src.read_text(encoding="utf-8"))
+    assert "name: anything-to-markdown" in fm
+    assert "name: doc2md" not in fm
     assert "display_name: 文档转Markdown" in fm
-    assert fm.index("name: doc2md") < fm.index("display_name:")
+    assert fm.index("name: anything-to-markdown") < fm.index("display_name:")
 
 
 def test_pack_comate_zip_is_slim(tmp_path: Path):
@@ -110,6 +112,8 @@ def test_pack_comate_zip_is_slim(tmp_path: Path):
     assert not any(n.startswith("references/") for n in names)
     assert "README.md" not in names
     assert "CHANGELOG.md" not in names
+    assert "name: anything-to-markdown" in skill
+    assert "name: doc2md" not in _frontmatter(skill)
     assert "display_name: 文档转Markdown" in skill
     assert "## Type notes" in skill
     assert "`.dbt`" in skill

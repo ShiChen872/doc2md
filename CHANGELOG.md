@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Comate zip: `SKILL.md` name is `anything-to-markdown` (the platform skill id). Git source stays `doc2md`.
+
 ## v0.4.35
 
 - Excel / ksheet: drop the WPS `id` on data-validation rules before markitdown reads the workbook. openpyxl rejects that attribute and otherwise fails the whole sheet.

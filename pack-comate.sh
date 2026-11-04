@@ -4,21 +4,24 @@
 # Extra markdown/tests make Comate's security-audit LLM time out (504 / 500102).
 #
 # Git SKILL.md has only name/description (official skill validator).
-# Comate UI needs display_name, so this script injects it into the zip
-# (and can inject a live overlay with --inject PATH).
+# The Comate platform skill is anything-to-markdown. The zip must use that
+# name or install fails with "包内是 doc2md". display_name is the UI title.
+# Both are injected into the zip (and a live overlay via --inject PATH).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 COMATE_DISPLAY_NAME="${COMATE_DISPLAY_NAME:-文档转Markdown}"
+COMATE_SKILL_NAME="${COMATE_SKILL_NAME:-anything-to-markdown}"
 
 inject_comate_display_name() {
   local skill_md="$1"
-  python3 - "$skill_md" "$COMATE_DISPLAY_NAME" <<'PY'
+  python3 - "$skill_md" "$COMATE_DISPLAY_NAME" "$COMATE_SKILL_NAME" <<'PY'
 import sys
 from pathlib import Path
 
 path = Path(sys.argv[1])
 display = sys.argv[2]
+skill_name = sys.argv[3]
 text = path.read_text(encoding="utf-8")
 if not text.startswith("---"):
     raise SystemExit(f"{path}: missing YAML frontmatter")
@@ -26,13 +29,15 @@ parts = text.split("---", 2)
 if len(parts) < 3:
     raise SystemExit(f"{path}: truncated YAML frontmatter")
 fm = parts[1]
-if "\ndisplay_name:" in fm or fm.lstrip().startswith("display_name:"):
-    path.write_text(text, encoding="utf-8")
-    raise SystemExit(0)
-needle = "name: doc2md\n"
-if needle not in fm:
+if "\nname: doc2md\n" in fm or fm.lstrip().startswith("name: doc2md\n"):
+    fm = fm.replace("name: doc2md\n", f"name: {skill_name}\n", 1)
+elif f"name: {skill_name}\n" not in fm and not fm.lstrip().startswith(f"name: {skill_name}\n"):
     raise SystemExit(f"{path}: expected 'name: doc2md' in frontmatter")
-fm = fm.replace(needle, needle + f"display_name: {display}\n", 1)
+if "\ndisplay_name:" not in fm and not fm.lstrip().startswith("display_name:"):
+    needle = f"name: {skill_name}\n"
+    if needle not in fm:
+        raise SystemExit(f"{path}: missing name after rewrite")
+    fm = fm.replace(needle, needle + f"display_name: {display}\n", 1)
 path.write_text("---" + fm + "---" + parts[2], encoding="utf-8")
 PY
 }

@@ -248,3 +248,86 @@ def test_convert_xlsx_extracts_dispimg(tmp_path: Path):
     assert saved.is_file()
     assert saved.read_bytes().startswith(b"\x89PNG")
     assert "无法提取" not in text
+
+
+def _inject_validation_id(xlsx: Path, rule_id: str = "{aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee}") -> None:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(xlsx, "r") as src, zipfile.ZipFile(buf, "w") as dst:
+        for item in src.infolist():
+            data = src.read(item.filename)
+            if item.filename.startswith("xl/worksheets/") and item.filename.endswith(".xml"):
+                text = data.decode("utf-8")
+                text = text.replace(
+                    "</worksheet>",
+                    (
+                        "<dataValidations count=\"1\">"
+                        f'<dataValidation type="list" allowBlank="1" id="{rule_id}" sqref="B1">'
+                        "<formula1>&quot;是,否&quot;</formula1>"
+                        "</dataValidation></dataValidations></worksheet>"
+                    ),
+                    1,
+                )
+                data = text.encode("utf-8")
+            dst.writestr(item, data)
+    xlsx.write_bytes(buf.getvalue())
+
+
+def test_strip_datavalidation_id_keeps_rid():
+    xml = (
+        '<worksheet><hyperlinks><hyperlink ref="D38" r:id="rId1"/></hyperlinks>'
+        '<dataValidations count="1">'
+        '<dataValidation type="list" id="{abc}" sqref="C2">'
+        "<formula1>&quot;是,否&quot;</formula1></dataValidation>"
+        "</dataValidations></worksheet>"
+    )
+    out, n = xi.strip_datavalidation_id_attrs(xml)
+    assert n == 1
+    assert "id=" not in out.split("<dataValidation", 1)[1].split(">", 1)[0]
+    assert 'r:id="rId1"' in out
+    assert "sqref=\"C2\"" in out
+
+
+def test_workbook_without_validation_ids_leaves_clean_file(tmp_path: Path):
+    openpyxl = pytest.importorskip("openpyxl")
+    src = tmp_path / "plain.xlsx"
+    wb = openpyxl.Workbook()
+    wb.active["A1"] = "物料"
+    wb.save(src)
+    wb.close()
+    out, holder = xi.workbook_without_validation_ids(src)
+    assert out == src.resolve()
+    assert holder is None
+
+
+def test_workbook_without_validation_ids_and_convert(tmp_path: Path):
+    openpyxl = pytest.importorskip("openpyxl")
+    src = tmp_path / "rules.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "清单"
+    ws["A1"] = "物料"
+    ws["B1"] = "是"
+    wb.save(src)
+    wb.close()
+    _inject_validation_id(src)
+    before = src.read_bytes()
+    with pytest.raises(TypeError, match="id"):
+        openpyxl.load_workbook(src)
+
+    stripped, holder = xi.workbook_without_validation_ids(src)
+    try:
+        assert stripped != src.resolve()
+        loaded = openpyxl.load_workbook(stripped)
+        assert loaded.active["A1"].value == "物料"
+        assert loaded.active["B1"].value == "是"
+    finally:
+        if holder is not None:
+            holder.cleanup()
+    assert src.read_bytes() == before
+
+    out_md = tmp_path / "rules.md"
+    conv.convert(src, out_md)
+    text = out_md.read_text(encoding="utf-8")
+    assert "物料" in text
+    assert "是" in text
+    assert src.read_bytes() == before

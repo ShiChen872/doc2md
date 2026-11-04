@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import posixpath
 import re
+import tempfile
 import zipfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
@@ -397,6 +398,60 @@ def inject_xlsx_drawing_images(
                     seen_members[member] = rel
                 text = splice_drawing_into_markdown(text, sheet, row, col, rel)
     return text, len(seen_members)
+
+
+_DV_OPEN_RE = re.compile(r"<dataValidation\b[^>]*>", re.IGNORECASE)
+# WPS writes a bare id="{uuid}" on dataValidation. Do not touch r:id.
+_BARE_ID_ATTR_RE = re.compile(
+    r"""(?<![A-Za-z0-9_:-])id\s*=\s*(?:"[^"]*"|'[^']*')"""
+)
+
+
+def strip_datavalidation_id_attrs(xml: str) -> tuple[str, int]:
+    """Drop WPS `id` attributes from dataValidation open tags. Return (xml, count)."""
+    removed = 0
+
+    def repl(match: re.Match[str]) -> str:
+        nonlocal removed
+        tag = match.group(0)
+        new, n = _BARE_ID_ATTR_RE.subn("", tag)
+        removed += n
+        return new
+
+    return _DV_OPEN_RE.sub(repl, xml), removed
+
+
+def workbook_without_validation_ids(
+    src: Path,
+) -> tuple[Path, tempfile.TemporaryDirectory[str] | None]:
+    """Copy to a temp .xlsx only when a worksheet dataValidation has an `id`.
+
+    The source workbook is not modified. Hyperlink `r:id` values stay.
+    """
+    src = src.expanduser().resolve()
+    try:
+        zin = zipfile.ZipFile(src)
+    except (OSError, zipfile.BadZipFile):
+        return src, None
+    updates: dict[str, bytes] = {}
+    with zin:
+        for name in zin.namelist():
+            if not (name.startswith("xl/worksheets/") and name.endswith(".xml")):
+                continue
+            text = zin.read(name).decode("utf-8")
+            stripped, n = strip_datavalidation_id_attrs(text)
+            if n:
+                updates[name] = stripped.encode("utf-8")
+        if not updates:
+            return src, None
+        infos = zin.infolist()
+        payloads = {info.filename: updates.get(info.filename, zin.read(info.filename)) for info in infos}
+    holder = tempfile.TemporaryDirectory(prefix="doc2md_xlsx_")
+    dest = Path(holder.name) / f"{src.stem}.xlsx"
+    with zipfile.ZipFile(dest, "w") as zout:
+        for info in infos:
+            zout.writestr(info, payloads[info.filename])
+    return dest, holder
 
 
 def is_xlsx_like(path: Path) -> bool:

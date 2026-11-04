@@ -523,6 +523,14 @@ def convert(
     elif kind == "xlsx" and suffix not in {".xlsx", ".xlsm", ".xltx", ".xltm", ".ksheet"}:
         work_path, holder = _copy_with_suffix(input_path, ".xlsx")
         suffix = ".xlsx"
+    dv_holder: tempfile.TemporaryDirectory[str] | None = None
+    from xlsx_images import is_xlsx_like, workbook_without_validation_ids
+
+    if is_xlsx_like(work_path):
+        stripped, dv_holder = workbook_without_validation_ids(work_path)
+        if stripped != work_path:
+            work_path = stripped
+            suffix = work_path.suffix.lower()
     md = MarkItDown()
     uri_count = 0
     pdf_count = 0
@@ -597,6 +605,8 @@ def convert(
     finally:
         if holder is not None:
             holder.cleanup()
+        if dv_holder is not None:
+            dv_holder.cleanup()
 
     output_path.write_text(text, encoding="utf-8")
 

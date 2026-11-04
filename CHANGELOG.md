@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## v0.4.35
+
+- Excel / ksheet: drop the WPS `id` on data-validation rules before markitdown reads the workbook. openpyxl rejects that attribute and otherwise fails the whole sheet.
+
 ## v0.4.34
 
 - WPS Word: character bold from the Writer text stream becomes Markdown `**`. A lead-in such as 调研关注点： stays bold and the rest of the sentence does not. A heading that is bold end to end stays a heading.

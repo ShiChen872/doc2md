@@ -2,7 +2,12 @@
 
 ## Unreleased
 
+## v0.4.36
+
 - Comate zip: `SKILL.md` name is `anything-to-markdown` (the platform skill id). Git source stays `doc2md`.
+- Nested expand reuses an existing `{name}.md` when that file already records the same share id, instead of writing a second copy.
+- A closed WPS share (`linkClosed`) is reported as closed. It is no longer described as an expired login.
+- Optional `--xlsx`: write Markdown pipe tables to a sidecar workbook, one sheet per table. Literal `NaN` cells become blank.
 
 ## v0.4.35
 

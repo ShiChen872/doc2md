@@ -236,6 +236,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Also write a readable .html sidecar next to the Markdown (same assets)",
     )
+    parser.add_argument(
+        "--xlsx",
+        action="store_true",
+        help="Also write Markdown pipe tables to a .xlsx sidecar (one sheet per table)",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -292,6 +297,16 @@ def main(argv: list[str] | None = None) -> int:
             print(f"ERROR: HTML sidecar failed: {e}", file=sys.stderr)
             return 1
         print(f"html: {html_path}")
+    if rc == 0 and args.xlsx:
+        from md_to_xlsx import write_sidecar_xlsx
+
+        md_path = written if written and written.is_file() else output
+        try:
+            xlsx_path = write_sidecar_xlsx(md_path)
+        except Exception as e:
+            print(f"ERROR: Excel sidecar failed: {e}", file=sys.stderr)
+            return 1
+        print(f"xlsx: {xlsx_path}")
     return rc
 
 

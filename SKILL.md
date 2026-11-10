@@ -32,7 +32,8 @@ Replace `<this-skill>` with this skill directory (e.g. `~/.agents/skills/doc2md`
 2. A missing or expired WPS/Feishu session opens Chrome so the user can log in. CI may pass `--no-login`.
 3. After conversion, report image counts and confirm `*_assets/` beside the `.md`.
 4. If the user asks for HTML / 网页预览稿, also pass `--html` (handbook-style sidecar `.html`, same assets; PPT / page decks become per-page talk cards). Keep the `.md`.
-5. PDF: only if the user asks, run `md_to_pdf.py`. Chrome is default; for 品牌样式 / Typst add `--engine typst --theme brand`.
+5. If the user asks for Excel / 表格更好看, also pass `--xlsx` (one sheet per Markdown table). Keep the `.md`. This rebuilds tables; it does not restore merges or dropdowns.
+6. PDF: only if the user asks, run `md_to_pdf.py`. Chrome is default; for 品牌样式 / Typst add `--engine typst --theme brand`.
 
 ## Type notes
 
@@ -81,6 +82,7 @@ A non-empty custom `--assets-dir` is not glob-wiped unless `--force-clean`.
 | `feishu_to_md.py` / `feishu_login.py` | Feishu/Lark URL → Markdown; headed login |
 | `md_to_pdf.py` | Local Markdown → PDF (only when asked) |
 | `md_to_html.py` | Local Markdown → HTML sidecar (only when asked) |
+| `md_to_xlsx.py` | Local Markdown tables → Excel sidecar (only when asked) |
 | `otl_to_md.py` / `wps_download.py` | OTL JSON → Markdown; raw download |
 
 ## Portability

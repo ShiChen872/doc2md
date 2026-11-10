@@ -478,6 +478,28 @@ def test_share_to_markdown_no_login_does_not_prompt(tmp_path: Path, monkeypatch)
         )
 
 
+def test_share_meta_error_closed_is_not_login():
+    err = wtm.share_meta_error({"result": "linkClosed"})
+    assert isinstance(err, wtm.ShareClosed)
+    assert "closed" in str(err).lower()
+    assert wtm.share_meta_error({"result": "apiRateLimitExceede"}) is None
+    assert wtm.share_meta_error("nope") is None
+
+
+def test_share_to_markdown_closed_does_not_prompt_login(tmp_path: Path, monkeypatch):
+    def fake_once(url, output, *, auto_login=True, **kwargs):
+        raise wtm.ShareClosed("Share link is closed. This URL no longer opens the file.")
+
+    monkeypatch.setattr(wtm, "_share_to_markdown_once", fake_once)
+    monkeypatch.setattr(
+        wtm,
+        "interactive_wps_login",
+        lambda url: (_ for _ in ()).throw(AssertionError("should not login")),
+    )
+    with pytest.raises(wtm.ShareClosed, match="closed"):
+        wtm.share_to_markdown("https://365.kdocs.cn/l/abc123", tmp_path / "out.md")
+
+
 def test_merge_shapes_payload_and_cover():
     into: dict = {}
     n = wtm.merge_shapes_payload(
@@ -712,6 +734,91 @@ def test_expand_nested_otl_reuses_existing_output(tmp_path: Path):
     assert "kdocs.cn/l/sameid01" not in parent_b.read_text(encoding="utf-8")
     assert reports_a[0].get("ok") and not reports_a[0].get("reused")
     assert reports_b[0].get("ok") and reports_b[0].get("reused")
+
+
+def test_expand_nested_reuses_markdown_for_same_share(tmp_path: Path):
+    parent = tmp_path / "导览.md"
+    parent.write_text(
+        "[发版说明书.otl](https://www.kdocs.cn/l/samechild)\n",
+        encoding="utf-8",
+    )
+    nested = tmp_path / "导览_nested"
+    nested.mkdir()
+    existing = nested / "发版说明书.md"
+    existing.write_text(
+        "> 来源: https://365.kdocs.cn/l/samechild\n\n# 发版说明书\n",
+        encoding="utf-8",
+    )
+    raw = {
+        "content": {
+            "type": "WPSDocument",
+            "attrs": {
+                "wpsDocumentName": "发版说明书.otl",
+                "wpsDocumentLink": "https://www.kdocs.cn/l/samechild",
+                "wpsDocumentType": "otl",
+            },
+        }
+    }
+    calls: list[str] = []
+
+    def fake_convert(url, dest, **kwargs):
+        calls.append(url)
+        raise AssertionError("should reuse the existing markdown")
+
+    reports = wtm.expand_nested_otl_documents(
+        raw,
+        parent,
+        max_depth=1,
+        visited=set(),
+        convert_child=fake_convert,
+    )
+    text = parent.read_text(encoding="utf-8")
+    assert calls == []
+    assert "导览_nested/发版说明书.md" in text
+    assert "kdocs.cn/l/samechild" not in text
+    assert list(nested.glob("*.md")) == [existing]
+    assert reports[0].get("reused") is True
+
+
+def test_expand_nested_different_share_does_not_reuse_name(tmp_path: Path):
+    parent = tmp_path / "导览.md"
+    parent.write_text(
+        "[发版说明书.otl](https://www.kdocs.cn/l/otherid1)\n",
+        encoding="utf-8",
+    )
+    nested = tmp_path / "导览_nested"
+    nested.mkdir()
+    (nested / "发版说明书.md").write_text(
+        "> 来源: https://365.kdocs.cn/l/samechild\n\n# 另一份\n",
+        encoding="utf-8",
+    )
+    raw = {
+        "content": {
+            "type": "WPSDocument",
+            "attrs": {
+                "wpsDocumentName": "发版说明书.otl",
+                "wpsDocumentLink": "https://www.kdocs.cn/l/otherid1",
+                "wpsDocumentType": "otl",
+            },
+        }
+    }
+
+    def fake_convert(url, dest, **kwargs):
+        dest = Path(dest)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(f"> 来源: {url}\n", encoding="utf-8")
+        return {"mode": "otl"}
+
+    wtm.expand_nested_otl_documents(
+        raw,
+        parent,
+        max_depth=1,
+        visited=set(),
+        convert_child=fake_convert,
+    )
+    names = sorted(p.name for p in nested.glob("*.md"))
+    assert "发版说明书.md" in names
+    assert any(name.startswith("发版说明书_otherid") for name in names)
 
 
 def test_expand_nested_depth_zero_is_noop(tmp_path: Path):

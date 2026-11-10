@@ -2049,6 +2049,18 @@ def relative_nested_path(dest: Path, start_dir: Path) -> str:
     return Path(os.path.relpath(dest.resolve(), start_dir.resolve())).as_posix()
 
 
+def markdown_records_share(path: Path, share_id: str) -> bool:
+    """True when a local Markdown file already came from this share id."""
+    sid = (share_id or "").strip()
+    if not sid:
+        return False
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")[:8000]
+    except OSError:
+        return False
+    return re.search(rf"/l/{re.escape(sid)}(?![A-Za-z0-9])", text) is not None
+
+
 def rewrite_nested_share_links(md: str, replacements: dict[str, str]) -> str:
     """Replace kdocs/wps share URLs with local relative paths, keyed by share id."""
     if not replacements:
@@ -2149,7 +2161,25 @@ def expand_nested_otl_documents(
             continue
 
         stem = safe_stem(name or child_sid)
-        if stem in used_stems or (nested_dir / f"{stem}.md").exists():
+        existing = nested_dir / f"{stem}.md"
+        if existing.is_file() and markdown_records_share(existing, child_sid):
+            dest = existing.resolve()
+            visited.add(child_sid)
+            output_map[child_sid] = dest
+            used_stems.add(stem)
+            replacements[child_sid] = relative_nested_path(dest, parent_md.parent)
+            reports.append(
+                {
+                    "ok": True,
+                    "name": name,
+                    "share_id": child_sid,
+                    "type": dtype,
+                    "output": str(dest),
+                    "reused": True,
+                }
+            )
+            continue
+        if stem in used_stems or existing.is_file():
             stem = f"{stem}_{child_sid[:8]}"
         used_stems.add(stem)
         dest = nested_dir / f"{stem}.md"
@@ -2242,6 +2272,19 @@ class _SessionExpired(WpsError):
     """Internal: share meta failed; wrapper may prompt login and retry once."""
 
 
+class ShareClosed(WpsError):
+    """The share URL is closed. Logging in again will not open it."""
+
+
+def share_meta_error(payload: object) -> WpsError | None:
+    """Classify a non-success link-meta body. None means try the next URL."""
+    if not isinstance(payload, dict):
+        return None
+    if str(payload.get("result") or "") == "linkClosed":
+        return ShareClosed("Share link is closed. This URL no longer opens the file.")
+    return None
+
+
 def _share_to_markdown_once(
     url: str,
     output_md: Path,
@@ -2330,11 +2373,17 @@ def _share_to_markdown_body(
                     )
                 except Exception:
                     continue
-                if r.status != 200:
-                    continue
                 try:
                     payload = r.json()
                 except Exception:
+                    payload = None
+                if r.status != 200:
+                    closed = share_meta_error(payload)
+                    if closed is not None:
+                        browser.close()
+                        raise closed
+                    continue
+                if not isinstance(payload, dict):
                     continue
                 fi_try = payload.get("fileinfo") or {}
                 if fi_try.get("id") or fi_try.get("fname") or fi_try.get("name"):

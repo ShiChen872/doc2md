@@ -821,6 +821,76 @@ def test_expand_nested_different_share_does_not_reuse_name(tmp_path: Path):
     assert any(name.startswith("发版说明书_otherid") for name in names)
 
 
+def test_expand_nested_keeps_downloaded_original(tmp_path: Path):
+    parent = tmp_path / "导览.md"
+    parent.write_text(
+        "[方案.pptx](https://www.kdocs.cn/l/pptxkid1)\n",
+        encoding="utf-8",
+    )
+    raw = {
+        "content": {
+            "type": "WPSDocument",
+            "attrs": {
+                "wpsDocumentName": "方案.pptx",
+                "wpsDocumentLink": "https://www.kdocs.cn/l/pptxkid1",
+                "wpsDocumentType": "pptx",
+            },
+        }
+    }
+    staged = tmp_path / "stage"
+    staged.mkdir()
+    original = staged / "方案.pptx"
+    original.write_bytes(b"PK-fake-pptx")
+
+    def fake_convert(url, dest, **kwargs):
+        dest = Path(dest)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(f"> 来源: {url}\n\n# 方案\n", encoding="utf-8")
+        return {"mode": "office", "original_file": str(original)}
+
+    wtm.expand_nested_otl_documents(
+        raw, parent, max_depth=1, visited=set(), convert_child=fake_convert
+    )
+    text = parent.read_text(encoding="utf-8")
+    kept = tmp_path / "导览_files" / "方案.pptx"
+    assert kept.is_file()
+    assert kept.read_bytes() == b"PK-fake-pptx"
+    assert "导览_nested/方案.md" in text
+    assert "（[原件](导览_files/方案.pptx)）" in text
+
+
+def test_expand_nested_without_original_file_has_only_markdown(tmp_path: Path):
+    parent = tmp_path / "导览.md"
+    parent.write_text(
+        "[手册.otl](https://www.kdocs.cn/l/otlonly1)\n",
+        encoding="utf-8",
+    )
+    raw = {
+        "content": {
+            "type": "WPSDocument",
+            "attrs": {
+                "wpsDocumentName": "手册.otl",
+                "wpsDocumentLink": "https://www.kdocs.cn/l/otlonly1",
+                "wpsDocumentType": "otl",
+            },
+        }
+    }
+
+    def fake_convert(url, dest, **kwargs):
+        dest = Path(dest)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(f"> 来源: {url}\n", encoding="utf-8")
+        return {"mode": "otl"}
+
+    wtm.expand_nested_otl_documents(
+        raw, parent, max_depth=1, visited=set(), convert_child=fake_convert
+    )
+    text = parent.read_text(encoding="utf-8")
+    assert "导览_nested/手册.md" in text
+    assert "原件" not in text
+    assert not (tmp_path / "导览_files").exists()
+
+
 def test_expand_nested_depth_zero_is_noop(tmp_path: Path):
     parent = tmp_path / "p.md"
     parent.write_text("[x](https://www.kdocs.cn/l/abc)\n", encoding="utf-8")

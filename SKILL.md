@@ -66,7 +66,7 @@ Entry point:
 
 If the CLI fails, report its stderr. An expired session: run the CLI again so Chrome can open for login. Password-protected or unsupported types: the user can export from the product UI, then `convert.py` on the local file.
 
-WPS OTL nested cards stay as kdocs links unless the user asks to expand them (`--recursive`). Large collections can take a long time.
+WPS OTL nested cards stay as kdocs links unless the user asks to expand them (`--recursive`). Large collections can take a long time. When a nested Office file can be downloaded, the original is kept in `{stem}_files/` and linked after the Markdown. `.otl`, dbsheet, closed shares, and preview-only files are not saved as originals.
 
 WPS/Feishu debug dumps go to a temp dir and are deleted after convert. To keep them, pass `--keep-work`.
 

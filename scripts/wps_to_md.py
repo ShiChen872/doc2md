@@ -2077,6 +2077,30 @@ def rewrite_nested_share_links(md: str, replacements: dict[str, str]) -> str:
     return NESTED_HREF_RE.sub(repl, md)
 
 
+def nested_originals_dir(parent_md: Path) -> Path:
+    """Office originals for nested cards live beside the parent Markdown."""
+    return parent_md.parent / f"{parent_md.stem}_files"
+
+
+def keep_downloaded_original(src: Path, originals_dir: Path) -> Path:
+    """Copy a downloaded Office file into the durable originals directory."""
+    originals_dir.mkdir(parents=True, exist_ok=True)
+    dest = originals_dir / src.name
+    if src.resolve() != dest.resolve():
+        shutil.copy2(src, dest)
+    return dest
+
+
+def append_original_links(md: str, pairs: list[tuple[str, str]]) -> str:
+    """After each local Markdown link, add （[原件](file)） once."""
+    for md_rel, original_rel in pairs:
+        suffix = f"（[原件]({original_rel})）"
+        needle = f"]({md_rel})"
+        pattern = re.escape(needle) + rf"(?!{re.escape(suffix)})"
+        md = re.sub(pattern, needle + suffix, md)
+    return md
+
+
 def expand_nested_otl_documents(
     raw: dict,
     parent_md: Path,
@@ -2104,8 +2128,10 @@ def expand_nested_otl_documents(
     parent_md = parent_md.expanduser().resolve()
     nested_dir = parent_md.parent / f"{parent_md.stem}_nested"
     replacements: dict[str, str] = {}
+    original_pairs: list[tuple[str, str]] = []
     used_stems: set[str] = set()
     output_map = outputs if outputs is not None else {}
+    originals_dir = nested_originals_dir(parent_md)
 
     for card in iter_wps_document_cards(raw):
         href = str(card.get("href") or "").strip()
@@ -2193,11 +2219,16 @@ def expand_nested_otl_documents(
                 _visited=visited,
                 keep_work=keep_work,
                 _outputs=output_map,
+                originals_dir=originals_dir,
             )
             dest = dest.expanduser().resolve()
             visited.add(child_sid)
             output_map[child_sid] = dest
-            replacements[child_sid] = relative_nested_path(dest, parent_md.parent)
+            md_rel = relative_nested_path(dest, parent_md.parent)
+            replacements[child_sid] = md_rel
+            kept = placed_original(child_result, originals_dir)
+            if kept is not None:
+                original_pairs.append((md_rel, relative_nested_path(kept, parent_md.parent)))
             reports.append(
                 {
                     "ok": True,
@@ -2220,10 +2251,27 @@ def expand_nested_otl_documents(
                 }
             )
 
-    if replacements and parent_md.is_file():
+    if parent_md.is_file() and (replacements or original_pairs):
         text = parent_md.read_text(encoding="utf-8")
-        parent_md.write_text(rewrite_nested_share_links(text, replacements), encoding="utf-8")
+        if replacements:
+            text = rewrite_nested_share_links(text, replacements)
+        if original_pairs:
+            text = append_original_links(text, original_pairs)
+        parent_md.write_text(text, encoding="utf-8")
     return reports
+
+
+def placed_original(result: object, originals_dir: Path) -> Path | None:
+    """Copy a still-present Office download into ``originals_dir``."""
+    if not isinstance(result, dict):
+        return None
+    raw = result.get("original_file")
+    if not raw:
+        return None
+    src = Path(str(raw))
+    if not src.is_file():
+        return None
+    return keep_downloaded_original(src, originals_dir)
 
 
 def share_to_markdown(
@@ -2236,6 +2284,7 @@ def share_to_markdown(
     _visited: set[str] | None = None,
     keep_work: bool = False,
     _outputs: dict[str, Path] | None = None,
+    originals_dir: Path | None = None,
 ) -> dict:
     url = normalize_url(url)
     visited = _visited if _visited is not None else set()
@@ -2249,6 +2298,7 @@ def share_to_markdown(
             visited=visited,
             keep_work=keep_work,
             outputs=outputs,
+            originals_dir=originals_dir,
         )
     except _SessionExpired:
         if auto_login and not _login_retried:
@@ -2262,6 +2312,7 @@ def share_to_markdown(
                 _visited=visited,
                 keep_work=keep_work,
                 _outputs=outputs,
+                originals_dir=originals_dir,
             )
         raise WpsError(
             "Failed to load share meta. Session may be expired — re-run wps_login.py."
@@ -2294,6 +2345,7 @@ def _share_to_markdown_once(
     visited: set[str] | None = None,
     keep_work: bool = False,
     outputs: dict[str, Path] | None = None,
+    originals_dir: Path | None = None,
 ) -> dict:
     sid = extract_share_id(url)
     output_md = output_md.expanduser().resolve()
@@ -2309,6 +2361,7 @@ def _share_to_markdown_once(
             work=work,
             keep_work=keep_work,
             outputs=outputs,
+            originals_dir=originals_dir,
         )
         if keep_work:
             result["work_dir"] = str(work)
@@ -2329,6 +2382,7 @@ def _share_to_markdown_body(
     work: Path,
     keep_work: bool = False,
     outputs: dict[str, Path] | None = None,
+    originals_dir: Path | None = None,
 ) -> dict:
     from playwright.sync_api import sync_playwright
     from otl_to_md import convert_file, load_otl
@@ -2633,6 +2687,8 @@ def _share_to_markdown_body(
             result["output"] = str(output_md)
             result["mode"] = "office"
             result["source_file"] = str(downloaded)
+            if originals_dir is not None:
+                result["original_file"] = str(keep_downloaded_original(downloaded, originals_dir))
             browser.close()
             stats = convert_office(downloaded, output_md)
             result["convert"] = stats

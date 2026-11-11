@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## v0.4.37
+
+- Nested expand keeps a downloaded Office original in `{parent}_files/` and links it after the Markdown. Preview-only and `.otl` children are not saved as originals.
+
 ## v0.4.36
 
 - Comate zip: `SKILL.md` name is `anything-to-markdown` (the platform skill id). Git source stays `doc2md`.
